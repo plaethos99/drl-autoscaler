@@ -1,0 +1,4 @@
+# Needed by the image work itself (also used inside the function wrappers)
+numpy>=1.26,<3
+pillow>=10.3
+onnxruntime>=1.18

@@ -1,0 +1,37 @@
+# BASELINE ONLY — apply when benchmarking Kubernetes HPA, delete before running the RL agent
+# (two controllers must never scale the same Deployment).
+#   kubectl apply -f k8s/hpa-baseline.yaml     /    kubectl delete -f k8s/hpa-baseline.yaml
+# Settings match the simulator's HPA baseline: 70 % CPU target, 30 s scale-down stabilisation.
+# For 5-minute tests also start k3s with:
+#   --kube-controller-manager-arg=horizontal-pod-autoscaler-sync-period=5s
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: classifier, namespace: imgsvc }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: classifier }
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies: [{ type: Percent, value: 100, periodSeconds: 5 }, { type: Pods, value: 4, periodSeconds: 5 }]
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 30
+      policies: [{ type: Percent, value: 100, periodSeconds: 5 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: resizer, namespace: imgsvc }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: resizer }
+  minReplicas: 1
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+  behavior:
+    scaleDown: { stabilizationWindowSeconds: 30 }

@@ -1,0 +1,12 @@
+# Tells kube-prometheus-stack (Helm) to scrape every image-service pod every 5 s.
+# Install the stack with:  helm install monitoring prometheus-community/kube-prometheus-stack -n monitoring --create-namespace \
+#   --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata: { name: imgsvc, namespace: imgsvc }
+spec:
+  selector: { matchLabels: { tier: imgsvc } }
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 5s

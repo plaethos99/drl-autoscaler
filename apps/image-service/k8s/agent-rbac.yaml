@@ -1,0 +1,25 @@
+# Least-privilege identity for the RL agent: it may only read and scale Deployments in "imgsvc".
+# Used when the agent runs as a pod in the cluster, or via a kubeconfig made from this token.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: rl-agent, namespace: imgsvc }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: rl-agent-scaler, namespace: imgsvc }
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: rl-agent-scaler, namespace: imgsvc }
+subjects: [{ kind: ServiceAccount, name: rl-agent, namespace: imgsvc }]
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: rl-agent-scaler }

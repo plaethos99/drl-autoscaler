@@ -1,0 +1,17 @@
+# Prometheus for the VM tier (docker compose). 5 s scrape = the agent's decision interval.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: imgsvc
+    static_configs:
+      - targets: ["gateway:8000", "resizer:8000", "classifier:8000", "store:8000"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    metric_relabel_configs:   # keep only our containers' CPU / memory series
+      - source_labels: [name]
+        regex: imgsvc-.*
+        action: keep

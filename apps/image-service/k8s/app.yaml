@@ -1,0 +1,158 @@
+# Kubernetes tier: the four services + Redis in namespace "imgsvc".
+# Replace ghcr.io/plaethos99 with your GHCR owner (lowercase), then:
+#   kubectl apply -f k8s/app.yaml
+# The RL agent (or HPA, for the baseline) changes spec.replicas of the Deployments below.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: imgsvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: redis, namespace: imgsvc, labels: { app: redis } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata: { labels: { app: redis } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          args: ["--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+          ports: [{ containerPort: 6379 }]
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 320Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: redis, namespace: imgsvc }
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379, targetPort: 6379 }]
+---
+# ---------------- store ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: store, namespace: imgsvc, labels: { app: store, tier: imgsvc } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: store } }
+  template:
+    metadata:
+      labels: { app: store, tier: imgsvc }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8000", prometheus.io/path: /metrics }
+    spec:
+      containers:
+        - name: store
+          image: ghcr.io/plaethos99/image-service:latest
+          env:
+            - { name: SERVICE, value: store }
+            - { name: REDIS_URL, value: "redis://redis:6379/0" }
+          ports: [{ containerPort: 8000, name: http }]
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 3 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: store, namespace: imgsvc, labels: { app: store } }
+spec:
+  selector: { app: store }
+  ports: [{ name: http, port: 8000, targetPort: http }]
+---
+# ---------------- resizer ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: resizer, namespace: imgsvc, labels: { app: resizer, tier: imgsvc } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: resizer } }
+  template:
+    metadata:
+      labels: { app: resizer, tier: imgsvc }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8000", prometheus.io/path: /metrics }
+    spec:
+      containers:
+        - name: resizer
+          image: ghcr.io/plaethos99/image-service:latest
+          env: [{ name: SERVICE, value: resizer }]
+          ports: [{ containerPort: 8000, name: http }]
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 3 }
+          resources:
+            requests: { cpu: 250m, memory: 192Mi }
+            limits: { cpu: 500m, memory: 384Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: resizer, namespace: imgsvc, labels: { app: resizer } }
+spec:
+  selector: { app: resizer }
+  ports: [{ name: http, port: 8000, targetPort: http }]
+---
+# ---------------- classifier (main scaling target) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: classifier, namespace: imgsvc, labels: { app: classifier, tier: imgsvc } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: classifier } }
+  template:
+    metadata:
+      labels: { app: classifier, tier: imgsvc }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8000", prometheus.io/path: /metrics }
+    spec:
+      containers:
+        - name: classifier
+          image: ghcr.io/plaethos99/image-service:latest
+          env:
+            - { name: SERVICE, value: classifier }
+            - { name: ORT_THREADS, value: "1" }
+          ports: [{ containerPort: 8000, name: http }]
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 2 }
+          resources:
+            requests: { cpu: 500m, memory: 384Mi }
+            limits: { cpu: "1", memory: 768Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: classifier, namespace: imgsvc, labels: { app: classifier } }
+spec:
+  selector: { app: classifier }
+  ports: [{ name: http, port: 8000, targetPort: http }]
+---
+# ---------------- gateway (public entry point) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: gateway, namespace: imgsvc, labels: { app: gateway, tier: imgsvc } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: gateway } }
+  template:
+    metadata:
+      labels: { app: gateway, tier: imgsvc }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8000", prometheus.io/path: /metrics }
+    spec:
+      containers:
+        - name: gateway
+          image: ghcr.io/plaethos99/image-service:latest
+          env:
+            - { name: SERVICE, value: gateway }
+            - { name: RESIZER_URL, value: "http://resizer:8000" }
+            - { name: CLASSIFIER_URL, value: "http://classifier:8000" }   # combined tier: function URL
+            - { name: STORE_URL, value: "http://store:8000" }
+          ports: [{ containerPort: 8000, name: http }]
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 3 }
+          resources:
+            requests: { cpu: 250m, memory: 192Mi }
+            limits: { cpu: "1", memory: 384Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: gateway, namespace: imgsvc, labels: { app: gateway } }
+spec:
+  type: LoadBalancer        # k3s ServiceLB / cloud LB; restrict source IPs in the firewall
+  selector: { app: gateway }
+  ports: [{ name: http, port: 80, targetPort: http }]

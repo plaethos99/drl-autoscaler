@@ -1,0 +1,66 @@
+# VM tier: all four services on one VM. The RL agent changes each container's CPU limit
+# (cgroup quota) with `docker update --cpus <n> imgsvc-classifier`, so no restarts are needed.
+#
+#   IMAGE=ghcr.io/plaethos99/image-service:latest docker compose up -d
+#   Gateway:    http://<vm-ip>:8080/process      Prometheus: http://<vm-ip>:9090 (keep private)
+
+x-svc: &svc
+  image: ${IMAGE:-ghcr.io/plaethos99/image-service:latest}
+  restart: unless-stopped
+  environment: &env
+    REDIS_URL: redis://redis:6379/0
+    SLA_MS: "500"
+
+services:
+  gateway:
+    <<: *svc
+    container_name: imgsvc-gateway
+    environment: { <<: *env, SERVICE: gateway }
+    ports: ["8080:8000"]
+    cpus: 0.5
+    depends_on: [resizer, classifier, store]
+
+  resizer:
+    <<: *svc
+    container_name: imgsvc-resizer
+    environment: { <<: *env, SERVICE: resizer }
+    cpus: 0.5
+
+  classifier:
+    <<: *svc
+    container_name: imgsvc-classifier
+    environment: { <<: *env, SERVICE: classifier, ORT_THREADS: "1" }
+    cpus: 1.0           # the main knob the agent turns on the VM tier (0.5 .. 4.0)
+
+  store:
+    <<: *svc
+    container_name: imgsvc-store
+    environment: { <<: *env, SERVICE: store }
+    cpus: 0.25
+    depends_on: [redis]
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: imgsvc-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb",
+              "--maxmemory-policy", "allkeys-lru"]
+
+  cadvisor:            # per-container CPU / memory for the agent's state
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: imgsvc-cadvisor
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: imgsvc-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["127.0.0.1:9090:9090"]   # only reachable from the VM / SSH tunnel
