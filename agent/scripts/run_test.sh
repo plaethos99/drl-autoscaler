@@ -2,7 +2,7 @@
 # One 5-minute test on the VM-tier box: reset the classifier, run Locust + the controller together,
 # then print the summary. Results: ~/results (decisions.sqlite + Locust CSVs).
 #
-#   ./run_test.sh calibrate            # 1 unit fixed, ramp load -> prints MU_PER_UNIT to export
+#   ./run_test.sh calibrate            # CAL_UNITS (4) fixed, ramp load -> prints MU_PER_UNIT to export
 #   ./run_test.sh rl        [scenario] # model controls the classifier's CPU
 #   ./run_test.sh rl-shadow [scenario] # model only logs; the allocation stays fixed
 #   ./run_test.sh threshold [scenario] # HPA-like baseline
@@ -21,6 +21,8 @@ SCENARIO="${2:-paper5min}"
 MU="${MU_PER_UNIT:-9.5}"
 DURATION="${DURATION_S:-300}"
 START_UNITS="${START_UNITS:-2}"
+CAL_UNITS="${CAL_UNITS:-4}"                 # calibration allocation (units)
+CAL_PEAK_USERS="${CAL_PEAK_USERS:-40}"      # calibration ramp goes from 10 % to 90 % of this
 RESULTS="${RESULTS:-$HOME/results}"
 mkdir -p "$RESULTS"
 CPU_UNIT="${CPUS_PER_UNIT:-0.5}"
@@ -30,8 +32,10 @@ export DECISION_DB="$RESULTS/decisions.sqlite" MU_PER_UNIT="$MU" CPUS_PER_UNIT="
 # Each Locust user sends ~1 request per (1 s + latency), so users ≈ rps × 1.25.
 PEAK_DEFAULT=$(python3 -c "print(round(0.8 * 8 * $MU * 1.25))")
 case "$POLICY" in
-  calibrate)  ARGS=(--policy static --static-units 1); START=1; SCENARIO=ramp
-              PEAK_DEFAULT=$(python3 -c "print(round(3 * $MU * 1.25))") ;;   # ramp to ~3x one unit's capacity
+  # Calibrate at CAL_UNITS fixed units and divide by them: with small units a single one can't meet the SLA
+  # at any load (one 12 ms inference takes ~250 ms of wall time at 0.05 core), so 1 unit says nothing.
+  calibrate)  ARGS=(--policy static --static-units "$CAL_UNITS"); START="$CAL_UNITS"; SCENARIO=ramp
+              PEAK_DEFAULT="$CAL_PEAK_USERS" ;;
   rl)         ARGS=(--policy rl);            START="$START_UNITS" ;;
   rl-shadow)  ARGS=(--policy rl --shadow);   START="$START_UNITS" ;;
   threshold)  ARGS=(--policy threshold);     START="$START_UNITS" ;;
@@ -67,7 +71,7 @@ wait "$CTRL" || { echo "controller failed, see $RESULTS/$RUN_ID.controller.log";
 echo "== Summary"
 "$VENV/bin/python" -m autoscaler report --runs "$RUN_ID"
 if [ "$POLICY" = calibrate ]; then
-  "$VENV/bin/python" -m autoscaler mu "$RUN_ID"
+  "$VENV/bin/python" -m autoscaler mu "$RUN_ID" --units "$CAL_UNITS"
 fi
 echo "Locust totals:"; grep -hE "Aggregated|/process|locust totals" "$RESULTS/${RUN_ID}_stats.csv" \
   "$RESULTS/$RUN_ID.locust.log" 2>/dev/null | head -2 || true
