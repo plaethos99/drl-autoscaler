@@ -22,4 +22,4 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install numpy requests pytest
       - run: python -m pytest -q
-      - run: bash -n scripts/ec2-setup.sh && bash -n scripts/run_test.sh
+      - run: bash -n scripts/ec2-setup.sh && bash -n scripts/run_test.sh && bash -n scripts/run_all.sh
