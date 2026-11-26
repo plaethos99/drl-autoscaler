@@ -57,6 +57,7 @@ From `sim_eval_summary.csv`:
 
 ## Files
 
-`sim_eval_summary.csv` (means per tier and method), `stats_rl_vs_hpa.csv` (per-pattern Mann-Whitney test of
+`sim_eval_summary.csv` (means per tier and method), `sim_eval_results.csv` (every evaluation episode: tier,
+method, training seed, pattern, held-out flag and metrics), `stats_rl_vs_hpa.csv` (per-pattern Mann-Whitney test of
 SLA violations, best RL algorithm vs HPA), `train_log.csv` (training time per run), `metadata.json` (what the
 controller checks), `figures/` (learning curves, benchmarks, example timelines).

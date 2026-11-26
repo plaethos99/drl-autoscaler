@@ -19,6 +19,24 @@ Same testbed as the v0.1 runs ([`../aws-results-2026-11-26`](../aws-results-2026
 | Runs | 5 rounds × 2 scenarios × {rl, threshold, static}, 5 min each, interleaved; start at 2 units (static: 4) |
 | Code | `run_all.sh` at commit `4771c29`, 16:26–19:13 UTC |
 
+## Figures
+
+![SLA violations, mean p95 and CPU per method and scenario](figures/aws_v02_metrics.png)
+
+*Bars: mean of 5 runs; dots: individual 5-minute runs. RL has the fewest SLA violations and the lowest p95 on
+both scenarios and is the only method under the 500 ms line on real traffic with margin; it pays with more CPU.*
+
+![CPU vs SLA violations per run](figures/aws_tradeoff.png)
+
+*Each dot is one run; down-left is better. RL v0.2 trades about 0.85 extra units for far fewer violations.
+Hollow markers are the earlier model-v0.1 session: v0.1 sat at the cheap end with HPA-like SLA.*
+
+![Simulator vs AWS, same patterns](figures/sim_vs_aws.png)
+
+*The released VM model and the baselines in the calibrated simulator and on AWS. The ranking (RL < HPA-like on
+SLA violations) carries over; the gap is smaller on AWS. On real traffic the simulator averages 10 random
+held-out windows, AWS plays one of them (`azure_typical`), so static allocation differs a lot.*
+
 ## Results (mean ± SD over 5 runs)
 
 ### `paper5min` (generated pattern)
@@ -79,8 +97,10 @@ The two sets ran in different sessions on the same box; the threshold baseline a
 
 ```
 python docs/aws-results-v0.2/analyze.py docs/aws-results-v0.2/summary.csv
+python docs/aws-results-v0.2/make_figures.py      # needs matplotlib
 ```
 
 `summary.csv` is the per-run table from `python -m autoscaler report` on the instance; `analyze.py` computes
-the tables above (pure Python). The step-level data is in `~/results/decisions.sqlite` on `drl-vm-test`
+the tables above (pure Python); `make_figures.py` draws `figures/` from it, the v0.1 runs and the simulator's
+per-episode results (`../sim-results-v0.2/sim_eval_results.csv`). The step-level data is in `~/results/decisions.sqlite` on `drl-vm-test`
 (dashboard → Download data). How to set up and run the test: [`../DEPLOY.md`](../DEPLOY.md).
