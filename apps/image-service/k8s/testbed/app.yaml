@@ -1,0 +1,170 @@
+# Kubernetes-tier TESTBED: the image service on a single-node k3s cluster sized for a 2-vCPU box (AWS Free
+# Plan m7i-flex.large), the setup used for the paper's k8s results. agent/scripts/k8s-setup.sh applies it.
+# (k8s/app.yaml is the general version for a larger cluster.)
+#
+# The autoscaled tier is the classifier Deployment: 1 unit = 1 pod with a fixed 0.1 vCPU (request = limit,
+# Guaranteed QoS), 1..8 pods. Gateway and resizer have fixed single pods with enough headroom that the
+# classifier is the bottleneck, as on the VM tier. The gateway is published on port 8080 of the node (k3s
+# ServiceLB), the same port the VM tier uses, so the load generator needs no change.
+apiVersion: v1
+kind: Namespace
+metadata: { name: imgsvc }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: redis, namespace: imgsvc, labels: { app: redis } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata: { labels: { app: redis } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          args: ["--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+          ports: [{ containerPort: 6379 }]
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 192Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: redis, namespace: imgsvc }
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379, targetPort: 6379 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: store, namespace: imgsvc, labels: { app: store, tier: imgsvc } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: store } }
+  template:
+    metadata:
+      labels: { app: store, tier: imgsvc }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8000" }
+    spec:
+      containers:
+        - name: store
+          image: ghcr.io/plaethos99/image-service:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: SERVICE, value: store }
+            - { name: REDIS_URL, value: "redis://redis:6379/0" }
+          ports: [{ containerPort: 8000, name: http }]
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 3, timeoutSeconds: 3 }
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: store, namespace: imgsvc }
+spec:
+  selector: { app: store }
+  ports: [{ name: http, port: 8000, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: resizer, namespace: imgsvc, labels: { app: resizer, tier: imgsvc } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: resizer } }
+  template:
+    metadata:
+      labels: { app: resizer, tier: imgsvc }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8000" }
+    spec:
+      containers:
+        - name: resizer
+          image: ghcr.io/plaethos99/image-service:latest
+          imagePullPolicy: IfNotPresent
+          env: [{ name: SERVICE, value: resizer }]
+          ports: [{ containerPort: 8000, name: http }]
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 3, timeoutSeconds: 3 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 384Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: resizer, namespace: imgsvc }
+spec:
+  selector: { app: resizer }
+  ports: [{ name: http, port: 8000, targetPort: http }]
+---
+# ---------------- classifier: the autoscaled tier ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: classifier, namespace: imgsvc, labels: { app: classifier, tier: imgsvc } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: classifier } }
+  strategy: { type: RollingUpdate, rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } }
+  template:
+    metadata:
+      labels: { app: classifier, tier: imgsvc }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8000" }
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: classifier
+          image: ghcr.io/plaethos99/image-service:latest
+          imagePullPolicy: IfNotPresent      # scale-up must not wait for a registry check
+          env:
+            - { name: SERVICE, value: classifier }
+            - { name: ORT_THREADS, value: "1" }
+          ports: [{ containerPort: 8000, name: http }]
+          # Ready = model loaded (the app loads it before serving). Probed every 2 s; a generous timeout so a
+          # busy 0.1-vCPU pod is not taken out of the Service under load.
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 2, timeoutSeconds: 3,
+                            failureThreshold: 3 }
+          resources:                          # 1 unit: request = limit -> fixed capacity per pod
+            requests: { cpu: 100m, memory: 384Mi }
+            limits: { cpu: 100m, memory: 384Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: classifier, namespace: imgsvc }
+spec:
+  selector: { app: classifier }
+  ports: [{ name: http, port: 8000, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: gateway, namespace: imgsvc, labels: { app: gateway, tier: imgsvc } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: gateway } }
+  template:
+    metadata:
+      labels: { app: gateway, tier: imgsvc }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "8000" }
+    spec:
+      containers:
+        - name: gateway
+          image: ghcr.io/plaethos99/image-service:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: SERVICE, value: gateway }
+            - { name: RESIZER_URL, value: "http://resizer:8000" }
+            - { name: CLASSIFIER_URL, value: "http://classifier:8000" }
+            - { name: STORE_URL, value: "http://store:8000" }
+            # kube-proxy balances per TCP connection: without keep-alive every request is spread over the
+            # classifier pods that exist *now*, including ones just added.
+            - { name: UPSTREAM_KEEPALIVE, value: "0" }
+          ports: [{ containerPort: 8000, name: http }]
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 3, timeoutSeconds: 3 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 750m, memory: 384Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: gateway, namespace: imgsvc }
+spec:
+  type: LoadBalancer        # k3s ServiceLB: node port 8080 (open it only to the load generator)
+  selector: { app: gateway }
+  ports: [{ name: http, port: 8080, targetPort: http }]

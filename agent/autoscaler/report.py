@@ -20,7 +20,9 @@ def summarise(rows: list[dict], unit_cost: float) -> dict:
         max_p95_ms=round(max((r["p95_ms"] for r in ok), default=0.0), 1),
         avg_units=round(sum(r["units_after"] for r in rows) / max(len(rows), 1), 2),
         cost=round(sum(r["units_after"] * unit_cost for r in rows), 2),
-        scaling_actions=sum(1 for r in rows if r["applied"]),
+        # changes the controller applied, plus changes made by someone else between steps (k8s HPA runs)
+        scaling_actions=sum(1 for r in rows if r["applied"]) + sum(
+            1 for prev, cur in zip(rows, rows[1:]) if cur["units_before"] != prev["units_after"]),
         failed_reads=len(rows) - len(ok),
     )
 

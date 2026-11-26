@@ -14,12 +14,14 @@ import datetime
 import hmac
 import os
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from flask import Flask, jsonify, redirect, request, send_from_directory, session
@@ -31,7 +33,7 @@ for p in (str(AGENT_DIR), str(REPO_DIR / "loadgen")):
         sys.path.insert(0, p)
 
 from autoscaler.config import SLA_P95_MS, TIERS  # noqa: E402
-from autoscaler.decisionlog import SCHEMA  # noqa: E402
+from autoscaler.decisionlog import SCHEMA, migrate  # noqa: E402
 from autoscaler.report import summarise  # noqa: E402
 from shapes import SCENARIOS, users_at  # noqa: E402
 
@@ -50,15 +52,35 @@ def measured_mu(default: float = 9.5) -> float:
         return default
 
 
+def app_url(locust_url: str, port: int = 8080) -> str:
+    """This box's gateway as the load generator reaches it: APP_URL, else the local address this box uses to
+    reach the load generator. Sent with every start, so one load generator can serve several app boxes
+    (the VM-tier box and the Kubernetes box)."""
+    if os.getenv("APP_URL"):
+        return os.environ["APP_URL"]
+    host = urlparse(locust_url).hostname or "127.0.0.1"
+    if host in ("127.0.0.1", "localhost"):
+        return f"http://127.0.0.1:{port}"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((host, 9))          # UDP "connect" sends nothing; it only picks the route
+            return f"http://{s.getsockname()[0]}:{port}"
+    except OSError:
+        return ""
+
+
 class Locust:
     """The few calls of Locust's web API the demo needs."""
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, target: str = ""):
         self.url = url.rstrip("/")
+        self.target = target          # gateway URL to load; "" = whatever Locust was started with
 
     def set_users(self, users: int) -> None:
-        r = requests.post(f"{self.url}/swarm", data={"user_count": users, "spawn_rate": max(10, users)},
-                          timeout=5)
+        data = {"user_count": users, "spawn_rate": max(10, users)}
+        if self.target:
+            data["host"] = self.target
+        r = requests.post(f"{self.url}/swarm", data=data, timeout=5)
         r.raise_for_status()
 
     def stop(self) -> None:
@@ -85,6 +107,7 @@ class Demo:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(db_path) as db:
             db.executescript(SCHEMA)
+            migrate(db)
         self.lock = threading.Lock()
         self.proc: subprocess.Popen | None = None
         self.run: dict | None = None
@@ -341,7 +364,8 @@ def main() -> None:
     if not password:
         sys.exit("set DASH_PASSWORD (scripts/install-dashboard.sh writes one to /etc/drl-dashboard.env)")
     db = os.getenv("DASH_DB", str(Path.home() / "demo" / "decisions.sqlite"))
-    demo = Demo(Locust(os.getenv("LOADGEN_URL", "http://127.0.0.1:8089")), db, measured_mu())
+    loadgen = os.getenv("LOADGEN_URL", "http://127.0.0.1:8089")
+    demo = Demo(Locust(loadgen, app_url(loadgen)), db, measured_mu())
     secret = os.getenv("DASH_SECRET", "").encode() or None
     app = create_app(demo, os.getenv("DASH_USER", "examiner"), password, secret)
     app.run(host="0.0.0.0", port=int(os.getenv("DASH_PORT", "8501")), threaded=True)

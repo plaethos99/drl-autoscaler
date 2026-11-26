@@ -8,8 +8,9 @@
 #   tmux attach -t drl             # live view (detach: Ctrl+B, then D)
 #
 # Env: REPEATS (3), SCENARIOS ("paper5min"; space-separated, e.g. "paper5min azure_typical", interleaved per
-#      round), SHADOW (1 = include one rl-shadow run), MU_PER_UNIT (skip calibration and use this value),
-#      MODEL_RELEASE (default: the controller's, model-v0.2)
+#      round), POLICIES (vm: "rl threshold static", k8s: "rl hpa static"), SHADOW (1 = include one rl-shadow
+#      run), MU_PER_UNIT (skip calibration and use this value), MODEL_RELEASE (default: the controller's).
+#      The tier comes from TIER in /etc/profile.d (k8s-setup.sh sets TIER=k8s on the Kubernetes box).
 set -uo pipefail
 URL=https://raw.githubusercontent.com/plaethos99/drl-autoscaler/main/agent/scripts/run_all.sh
 SELF="$HOME/run_all.sh"
@@ -26,12 +27,15 @@ case "${1:-}" in
     # A fresh login picks up the docker group and CPUS_PER_UNIT (/etc/profile.d/drl-autoscaler.sh).
     exec sudo -iu "$(id -un)" REPEATS="${REPEATS:-3}" SCENARIOS="${SCENARIOS:-${SCENARIO:-paper5min}}" \
       SHADOW="${SHADOW:-1}" MU_PER_UNIT="${MU_PER_UNIT:-}" ${MODEL_RELEASE:+MODEL_RELEASE="$MODEL_RELEASE"} \
+      ${POLICIES:+POLICIES="$POLICIES"} \
       bash "$SELF" --tests
     ;;
   --tests)
     cd /opt/drl-autoscaler/agent/scripts
     mkdir -p "$HOME/results"
-    echo "== $(date -u +%T) UTC: $(nproc) vCPU, CPUS_PER_UNIT=${CPUS_PER_UNIT:-0.5}"
+    TIER="${TIER:-vm}"
+    if [ "$TIER" = k8s ]; then POLICIES="${POLICIES:-rl hpa static}"; else POLICIES="${POLICIES:-rl threshold static}"; fi
+    echo "== $(date -u +%T) UTC: tier $TIER, $(nproc) vCPU, unit ${POD_CPUS:-${CPUS_PER_UNIT:-0.5}} vCPU, policies: $POLICIES"
     if [ -z "${MU_PER_UNIT:-}" ]; then
       unset MU_PER_UNIT
       ./run_test.sh calibrate | tee "$HOME/results/calibrate.out"
@@ -45,7 +49,7 @@ case "${1:-}" in
     if [ "${SHADOW:-1}" = 1 ]; then ./run_test.sh rl-shadow "$first" || echo "== rl-shadow failed"; fi
     for i in $(seq 1 "$REPEATS"); do
       for sc in $SCENARIOS; do
-        for p in rl threshold static; do
+        for p in $POLICIES; do
           echo "== $(date -u +%T) UTC: round $i/$REPEATS, $sc, $p"
           ./run_test.sh "$p" "$sc" || echo "== $p $sc round $i failed"
         done

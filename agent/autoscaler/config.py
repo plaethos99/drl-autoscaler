@@ -17,6 +17,9 @@ TIERS = {
     # is calibrated at the same unit size.
     "vm": dict(min_units=1, max_units=8, cpus_per_unit=float(os.getenv("CPUS_PER_UNIT", "0.5")),
                unit_cost=0.5),
+    # unit = 1 classifier pod with a fixed CPU (request = limit, POD_CPUS; 0.1 vCPU on the AWS k3s testbed,
+    # apps/image-service/k8s/testbed). New pods take time to start: the controller sees them as "pending".
+    "k8s": dict(min_units=1, max_units=8, cpus_per_unit=float(os.getenv("POD_CPUS", "0.1")), unit_cost=1.0),
 }
 
 
@@ -27,7 +30,7 @@ def _env(name: str, default: str) -> str:
 @dataclass
 class Settings:
     tier: str = "vm"
-    policy: str = "rl"                 # rl | threshold | static
+    policy: str = "rl"                 # rl | threshold | static | hpa (k8s: the cluster's own HPA scales)
     shadow: bool = False               # rl: compute + log decisions, but never apply them
     duration_s: float = 0.0            # 0 = run until stopped
     run_id: str = ""
@@ -41,6 +44,8 @@ class Settings:
     prom_url: str = field(default_factory=lambda: _env("PROM_URL", "http://127.0.0.1:9090"))
     window: str = field(default_factory=lambda: _env("PROM_WINDOW", "15s"))   # >= 3 scrapes at 5 s
     container: str = field(default_factory=lambda: _env("TARGET_CONTAINER", "imgsvc-classifier"))
+    k8s_namespace: str = field(default_factory=lambda: _env("K8S_NAMESPACE", "imgsvc"))
+    k8s_deployment: str = field(default_factory=lambda: _env("K8S_DEPLOYMENT", "classifier"))
 
     # Requests/s one unit serves within the SLA; set the measured value (scripts/run_test.sh calibrate).
     # AWS 2-vCPU testbed (0.05-vCPU units): 3.5. The simulator's VM profile (v0.2+) samples 3.5..4.1.

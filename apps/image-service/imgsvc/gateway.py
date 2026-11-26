@@ -19,7 +19,7 @@ async def lifespan(app: FastAPI):
     if getattr(app.state, "client", None) is None:   # tests inject their own client
         app.state.client = httpx.AsyncClient(
             timeout=config.UPSTREAM_TIMEOUT_S,
-            limits=httpx.Limits(max_connections=500, max_keepalive_connections=100),
+            limits=httpx.Limits(max_connections=500, max_keepalive_connections=config.UPSTREAM_KEEPALIVE),
         )
         created = True
     yield

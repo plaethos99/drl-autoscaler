@@ -4,6 +4,7 @@
   python -m autoscaler run --policy rl --shadow                   # log what the model would do, change nothing
   python -m autoscaler run --policy threshold --duration 300      # HPA-like baseline
   python -m autoscaler run --policy static --duration 300         # fixed allocation baseline
+  python -m autoscaler run --tier k8s --policy hpa --duration 300 # k8s: log while the cluster's HPA scales
   python -m autoscaler report                                     # compare runs in decisions.sqlite
   python -m autoscaler mu <run_id>                                # calibration: req/s per unit
 """
@@ -20,8 +21,9 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="run the control loop")
-    r.add_argument("--tier", default="vm", choices=["vm"])
-    r.add_argument("--policy", default="rl", choices=["rl", "threshold", "static"])
+    r.add_argument("--tier", default="vm", choices=["vm", "k8s"])
+    r.add_argument("--policy", default="rl", choices=["rl", "threshold", "static", "hpa"],
+                   help="hpa: k8s only, log while the cluster's HorizontalPodAutoscaler scales")
     r.add_argument("--shadow", action="store_true", help="rl only: log decisions without applying them")
     r.add_argument("--duration", type=float, default=0.0, help="seconds (0 = until Ctrl+C)")
     r.add_argument("--run-id", default="")

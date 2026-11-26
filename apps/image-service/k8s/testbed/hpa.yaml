@@ -1,0 +1,23 @@
+# BASELINE: the cluster's own HorizontalPodAutoscaler on the classifier (k8s testbed). run_test.sh applies it
+# for "hpa" runs only and deletes it afterwards (two controllers must never scale the same Deployment).
+# Standard CPU rule: 70 % of the pods' CPU request, same range as the RL agent (1..8 pods). k8s-setup.sh starts
+# k3s with a 5 s HPA sync period (default 15 s) to match the agent's 5 s decisions; scale-down waits 30 s, as
+# the simulator's HPA-like baseline. CPU comes from metrics-server (bundled with k3s).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: classifier, namespace: imgsvc }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: classifier }
+  minReplicas: 1
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies: [{ type: Percent, value: 100, periodSeconds: 5 }, { type: Pods, value: 4, periodSeconds: 5 }]
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 30
+      policies: [{ type: Percent, value: 100, periodSeconds: 5 }]

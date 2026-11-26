@@ -61,6 +61,12 @@ def users_at(t: float) -> float:
 class ImageUser(HttpUser):
     wait_time = constant(1)
 
+    def on_start(self):
+        # The dashboard / run_test.sh send the target app box with each start (Locust's "host" field), so one
+        # load generator serves both the VM-tier box and the Kubernetes box.
+        if self.environment.host:
+            self.client.base_url = self.environment.host.rstrip("/")
+
     @task
     def process(self):
         with self.client.post("/process", data=random.choice(IMAGES), headers={"Content-Type": "image/jpeg"},

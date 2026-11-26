@@ -19,6 +19,9 @@ RESIZER_HEADERS = _headers("RESIZER_HEADERS")
 CLASSIFIER_HEADERS = _headers("CLASSIFIER_HEADERS")
 STORE_HEADERS = _headers("STORE_HEADERS")
 UPSTREAM_TIMEOUT_S = float(os.getenv("UPSTREAM_TIMEOUT_S", "10"))
+# Idle upstream connections the gateway keeps open. In Kubernetes set 0: kube-proxy balances per connection,
+# so kept-alive connections would stay pinned to the old pods and new replicas would get little traffic.
+UPSTREAM_KEEPALIVE = int(os.getenv("UPSTREAM_KEEPALIVE", "100"))
 
 REDIS_URL = os.getenv("REDIS_URL", "")          # empty -> in-memory store
 RESULT_TTL_S = int(os.getenv("RESULT_TTL_S", "3600"))

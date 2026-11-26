@@ -12,7 +12,7 @@ import time
 
 import requests
 
-from .app import TICK_S, Locust, users_at
+from .app import TICK_S, Locust, app_url, users_at
 
 
 def main(argv=None) -> None:
@@ -21,9 +21,11 @@ def main(argv=None) -> None:
     ap.add_argument("--scenario", default="paper5min")
     ap.add_argument("--peak", type=int, required=True)
     ap.add_argument("--duration", type=float, default=300)
+    ap.add_argument("--target", help="gateway URL to load (default: this box, port 8080)")
     a = ap.parse_args(argv)
 
-    locust, last = Locust(a.url), -1
+    locust, last = Locust(a.url, a.target or app_url(a.url)), -1
+    print(f"load target: {locust.target or '(Locust default)'}")
     t0 = time.monotonic()
     try:
         while (t := time.monotonic() - t0) < a.duration:
