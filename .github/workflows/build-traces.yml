@@ -22,8 +22,14 @@ jobs:
           ls -la trace.rar
       - name: Extract
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq unar
-          unar -q -o trace trace.rar
+          # RAR5: unrar (multiverse) handles it; unar could not ("read more data than was available").
+          sudo apt-get update -qq
+          mkdir -p trace
+          if sudo apt-get install -y -qq unrar; then
+            unrar x -o+ trace.rar trace/
+          else
+            sudo apt-get install -y -qq 7zip-rar 7zip && 7zz x -otrace trace.rar
+          fi
           find trace -type f -exec ls -la {} \;
       - run: pip install numpy pandas
       - run: python training/build_trace_windows.py trace
