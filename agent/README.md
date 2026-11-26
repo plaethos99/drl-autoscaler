@@ -11,7 +11,7 @@ Prometheus ──> state (9 values, same as training) ──> policy ──> gua
 
 | File | What |
 |---|---|
-| `autoscaler/modelstore.py` | Downloads `<tier>_best.zip` and `metadata.json` from a GitHub Release (`model-v0.1`) and loads them with Stable-Baselines3 |
+| `autoscaler/modelstore.py` | Downloads `<tier>_best.zip` and `metadata.json` from a GitHub Release (`model-v0.2` by default; `MODEL_RELEASE=model-v0.1` for the first AWS runs) and loads them with Stable-Baselines3 |
 | `autoscaler/state.py` | Builds the observation in `metadata.json` order with the simulator's scaling (sim-to-real notes in the docstring) |
 | `autoscaler/prom.py` | The PromQL queries (gateway rps and p95, classifier in-flight, cAdvisor CPU and memory) |
 | `autoscaler/policies.py` | `rl`, `threshold` (HPA-like, 70 % CPU target, 30 s scale-down window) and `static` (4 units) |

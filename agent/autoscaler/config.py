@@ -33,7 +33,7 @@ class Settings:
     run_id: str = ""
 
     # model (GitHub Release asset + metadata.json)
-    model_release: str = field(default_factory=lambda: _env("MODEL_RELEASE", "model-v0.1"))
+    model_release: str = field(default_factory=lambda: _env("MODEL_RELEASE", "model-v0.2"))
     model_repo: str = field(default_factory=lambda: _env("MODEL_REPO", "plaethos99/drl-autoscaler"))
     model_dir: str = field(default_factory=lambda: _env("MODEL_DIR", os.path.expanduser("~/.cache/drl-autoscaler")))
 
