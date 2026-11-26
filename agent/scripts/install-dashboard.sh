@@ -8,9 +8,12 @@ DIR=/opt/drl-autoscaler
 ENV_FILE=/etc/drl-dashboard.env
 LOADGEN_URL="${1:-}"
 
+# Same unit size as the scripted runs (ec2-setup.sh writes it to /etc/profile.d/drl-autoscaler.sh).
+CPU_UNIT=$(sed -n 's/^export CPUS_PER_UNIT=//p' /etc/profile.d/drl-autoscaler.sh 2>/dev/null)
+CPU_UNIT="${CPU_UNIT:-0.5}"
+
 if [ ! -f "$ENV_FILE" ]; then
   PASSWORD=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-16)
-  if [ "$(nproc)" -ge 8 ]; then CPU_UNIT=0.5; else CPU_UNIT=0.125; fi
   cat > "$ENV_FILE" <<EOF
 DASH_USER=examiner
 DASH_PASSWORD=$PASSWORD
@@ -22,8 +25,9 @@ EOF
   printf 'Dashboard login\n  user: examiner\n  password: %s\n' "$PASSWORD" > /home/ubuntu/dashboard-login.txt
   chown ubuntu:ubuntu /home/ubuntu/dashboard-login.txt
   chmod 600 /home/ubuntu/dashboard-login.txt
-elif [ -n "$LOADGEN_URL" ]; then
-  sed -i "s#^LOADGEN_URL=.*#LOADGEN_URL=$LOADGEN_URL#" "$ENV_FILE"
+else
+  [ -z "$LOADGEN_URL" ] || sed -i "s#^LOADGEN_URL=.*#LOADGEN_URL=$LOADGEN_URL#" "$ENV_FILE"
+  sed -i "s#^CPUS_PER_UNIT=.*#CPUS_PER_UNIT=$CPU_UNIT#" "$ENV_FILE"
 fi
 # Scripted runs (run_test.sh) use the same load generator when it is a separate box.
 if [ -n "$LOADGEN_URL" ] && [ "$LOADGEN_URL" != "http://127.0.0.1:8089" ]; then

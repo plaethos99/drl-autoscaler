@@ -3,7 +3,7 @@
 # Paste as EC2 "User data" (runs as root on first boot) on Ubuntu 24.04, or run with sudo.
 # Instance: c6i.2xlarge (8 vCPU). The classifier needs up to 4 cores (8 units x 0.5); the rest
 # (gateway, resizer, Locust, controller) uses the other 4. On a smaller box (e.g. the Free Plan's
-# 2-vCPU m7i-flex.large) the unit shrinks to 0.125 vCPU, so 8 units = 1 core.
+# 2-vCPU m7i-flex.large) the unit shrinks to 0.05 vCPU, so 8 units = 0.4 core (see below).
 # Progress: /var/log/drl-setup.log
 set -euxo pipefail
 exec > >(tee -a /var/log/drl-setup.log) 2>&1
@@ -23,15 +23,20 @@ rm -rf "$DIR"
 git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$DIR"
 chown -R ubuntu:ubuntu "$DIR"
 
-# Unit size: 0.5 vCPU on 8+ vCPU (as in the simulator), 0.125 vCPU on smaller boxes.
-if [ "$(nproc)" -ge 8 ]; then CPU_UNIT=0.5; SIDE_CPUS=1.0; else CPU_UNIT=0.125; SIDE_CPUS=0.5; fi
+# Unit size and the fixed shares of the other services. The classifier at 8 units must still be the
+# bottleneck: the gateway costs about as much CPU per request as the classifier, so it needs more headroom.
+# 2-vCPU box (measured 2026-11-26, small uploads): unit 0.05 vCPU (8 units = 0.4 core) saturates at
+# ~29 req/s while the gateway (0.75) and resizer (0.5) stay near a third of their limits.
+# 8+ vCPU: 0.5 vCPU units as in the simulator; re-check the bottleneck with `docker stats` before use.
+if [ "$(nproc)" -ge 8 ]; then CPU_UNIT=0.5; GW_CPUS=3.0; RS_CPUS=2.0; else CPU_UNIT=0.05; GW_CPUS=0.75; RS_CPUS=0.5; fi
 echo "export CPUS_PER_UNIT=$CPU_UNIT" > /etc/profile.d/drl-autoscaler.sh
 
 # App stack (VM tier compose file). Gateway and resizer get a fixed share so the classifier is the
 # bottleneck the agent controls.
 cd "$DIR/apps/image-service"
 IMAGE="$IMAGE" docker compose up -d
-docker update --cpus "$SIDE_CPUS" imgsvc-gateway imgsvc-resizer
+docker update --cpus "$GW_CPUS" imgsvc-gateway
+docker update --cpus "$RS_CPUS" imgsvc-resizer
 
 # Controller + Locust in one venv (CPU-only PyTorch keeps it ~1 GB smaller).
 python3 -m venv /opt/venv
