@@ -9,8 +9,9 @@ benchmarked against Kubernetes HPA and round-robin (static) allocation.
 | `training/` | Gymnasium simulator + PPO / DQN / DDPG training notebook (runs on Kaggle/Colab) | 1, 2 |
 | `apps/image-service/` | The managed workload: Smart Image Processing Service (gateway → resizer → classifier → store) | 3 |
 | `loadgen/` | Locust 5-minute load scenarios (same shapes as the simulator) | 4 |
-| `agent/` | Controller: RL agent + safety guards + adapters (VM now; functions / K8s and the Gradio UI next) | 3 |
+| `agent/` | Controller: RL agent + safety guards + adapters (VM now; functions / K8s next) and the live demo dashboard | 3 |
 | `infra/` *(next)* | Terraform for AWS, Azure, GCP | 3 |
+| `docs/` | [AWS deployment guide](docs/DEPLOY.md) and [AWS results](docs/aws-results-2026-11-26/README.md) | 3, 4 |
 
 Trained models are published as GitHub Releases (`model-v*`).
 

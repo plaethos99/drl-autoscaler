@@ -24,26 +24,11 @@ Prometheus ──> state (9 values, same as training) ──> policy ──> gua
 Shadow mode (`--shadow`) logs what the model would do without changing anything. Use it before
 letting the model act on a new tier.
 
-## First test on AWS (VM tier, one instance)
+## Running it on AWS
 
-1. **Budget alarm** (Billing → Budgets), for example $10 per month.
-2. **Launch an instance:** Ubuntu 24.04, **c6i.2xlarge** (8 vCPU, about $0.34/h in us-east-1), 20 GB disk.
-   Paste `scripts/ec2-setup.sh` into *Advanced details → User data*. For *EC2 Instance Connect*, allow
-   SSH (port 22) only from the `com.amazonaws.<region>.ec2-instance-connect` prefix list; no other
-   inbound ports are needed. Setup takes about 5–8 minutes.
-   `tail -f /var/log/drl-setup.log` shows progress, and `/opt/drl-setup-done` appears at the end.
-3. **Run the tests** as `ubuntu` (about 6 minutes each):
-   ```bash
-   cd /opt/drl-autoscaler/agent/scripts
-   ./run_test.sh calibrate                 # prints e.g. export MU_PER_UNIT=11.80
-   export MU_PER_UNIT=...                  # use the printed value for every run below
-   ./run_test.sh rl-shadow                 # sanity check: model decisions logged, nothing applied
-   ./run_test.sh rl                        # model in control
-   ./run_test.sh threshold                 # HPA-like baseline
-   ./run_test.sh static                    # fixed allocation baseline
-   /opt/venv/bin/python -m autoscaler report --db ~/results/decisions.sqlite --csv ~/results/summary.csv
-   ```
-4. **Terminate the instance** when finished (its results are in `~/results`; copy them off first).
+Step-by-step guide (two instances, firewall, the measured runs, the dashboard demo, stop/start and
+troubleshooting): [docs/DEPLOY.md](../docs/DEPLOY.md). Results from 2026-11-26:
+[docs/aws-results-2026-11-26](../docs/aws-results-2026-11-26/README.md).
 
 ## Live demo dashboard
 
