@@ -41,7 +41,7 @@ from gymnasium import spaces
 QUICK = os.environ.get("QUICK") == "1"   # set True for a tiny smoke run (few minutes)
 MODES = ["k8s", "vm", "function"]   # train one model per tier
 ALGOS = ["PPO", "DQN", "DDPG"]      # comparative study (Objective 1)
-SEEDS = [0, 1, 2]                   # use 5 seeds for the final paper run
+SEEDS = [0, 1, 2, 3, 4]             # 5 seeds (v0.2 paper run)
 TIMESTEPS = 150_000                 # per (mode, algo, seed)
 EVAL_EPISODES = 10                  # per pattern per method
 NET_ARCH = [128, 128]               # same MLP for every algorithm (fair comparison)
@@ -67,6 +67,7 @@ print("Output dir:", OUT_DIR)
 # %%
 DT = 5.0                 # seconds per step
 EPISODE_STEPS = 60       # 5 minutes
+OBS_WINDOW_STEPS = 3     # the controller reads rate() and p95 over a 15 s Prometheus window = 3 steps
 SLA_P95_MS = 500.0
 CLIENT_TIMEOUT_MS = 10_000.0   # requests slower than this time out (caps the latency metric)
 ACTION_DELTAS = np.array([-2, -1, 0, 1, 2])   # discrete action -> change in allocation units
@@ -214,8 +215,11 @@ class CloudScalingEnv(gym.Env):
         self.queue = 0.0
         self.ondemand = 0.0         # function mode: warm on-demand instances
         self.ondemand_age = 0
-        self.prev_rps = self.rps[0]
         self.last = dict(cpu=0.3, mem=0.3, p95=self.overhead, cold_frac=0.0, cpu_demand=0.3)
+        # What the agent sees is what the real controller sees: request rate and p95 of the *past*
+        # OBS_WINDOW_STEPS steps (Prometheus window), never the rate of the step about to happen.
+        self.win = [(float(self.rps[0]), float(self.overhead), 1.0)] * OBS_WINDOW_STEPS
+        self.prev_obs_rps = float(self.rps[0])
         return self._obs(), {}
 
     def step(self, action):
@@ -313,7 +317,7 @@ class CloudScalingEnv(gym.Env):
         info = dict(t=self.t, rps=rps, units=self.units, pending=len(self.pending), p95=p95,
                     violated=violated, cost=cost, dropped=dropped, arrivals=arrivals,
                     cpu=cpu, delta=delta, pattern=self.pattern)
-        self.prev_rps = rps
+        self.win = (self.win + [(arrivals / DT, p95, max(arrivals, 1.0))])[-OBS_WINDOW_STEPS:]
         self.t += 1
         terminated = False
         truncated = self.t >= EPISODE_STEPS
@@ -322,14 +326,19 @@ class CloudScalingEnv(gym.Env):
     def _obs(self):
         p = self.p
         cap = p["max_units"] * self.mu
-        rps = float(self.rps[min(self.t, EPISODE_STEPS - 1)])
+        # 15 s window: mean request rate, request-weighted p95 (what a histogram over the window yields)
+        rps = float(np.mean([w[0] for w in self.win]))
+        weights = np.array([w[2] for w in self.win])
+        p95_win = float(np.dot([w[1] for w in self.win], weights) / weights.sum())
+        trend = (rps - self.prev_obs_rps) / cap
+        self.prev_obs_rps = rps
         obs = np.array([
             self.last["cpu"],
             self.last["mem"],
             min(self.queue / (cap * DT), 3.0),
-            min(self.last["p95"] / SLA_P95_MS, 4.0),
+            min(p95_win / SLA_P95_MS, 4.0),
             rps / cap,
-            np.clip((rps - self.prev_rps) / cap, -1.0, 1.0),
+            np.clip(trend, -1.0, 1.0),
             self.units / p["max_units"],
             len(self.pending) / p["max_units"],
             self.last["cold_frac"],
@@ -543,7 +552,8 @@ for mode in MODES:
     print(f"{mode}: best = {algo} (seed {seed})  algo ranking: {by_algo.round(2).to_dict()}")
 
 metadata = dict(
-    version="v0.1-sim-uncalibrated",
+    version="v0.2-vm-calibrated-aws",
+    obs_window_steps=OBS_WINDOW_STEPS,
     created=time.strftime("%Y-%m-%d %H:%M:%S"),
     decision_interval_s=DT, episode_steps=EPISODE_STEPS, sla_p95_ms=SLA_P95_MS,
     action_deltas=ACTION_DELTAS.tolist(),

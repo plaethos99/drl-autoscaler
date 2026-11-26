@@ -1,0 +1,24 @@
+# Simulator checks (runs on GitHub, not your PC). No PyTorch or Stable-Baselines3: only the environment.
+name: training
+
+on:
+  push:
+    branches: [main]
+    paths: ["training/**", ".github/workflows/training.yml"]
+  pull_request:
+    paths: ["training/**", ".github/workflows/training.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: training } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install "gymnasium>=0.29" numpy pandas pytest
+      - run: python -m pytest -q tests
