@@ -60,7 +60,10 @@ class Locust:
         r.raise_for_status()
 
     def stop(self) -> None:
-        requests.get(f"{self.url}/stop", timeout=5)
+        r = requests.post(f"{self.url}/stop", timeout=5)          # Locust 2.3x: POST; older: GET
+        if r.status_code == 405:
+            r = requests.get(f"{self.url}/stop", timeout=5)
+        r.raise_for_status()
 
     def stats(self) -> dict:
         try:
