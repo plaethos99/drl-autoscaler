@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import logging
 import signal
+import subprocess
 import time
 import uuid
 from dataclasses import asdict
 
-from .adapters.vm_docker import DockerCpuAdapter
+from .adapters.vm_docker import CgroupUsage, DockerCpuAdapter
 from .config import DT_S, SLA_P95_MS, Settings
 from .decisionlog import DecisionLog
 from .guards import Guards
@@ -49,7 +50,13 @@ def run(s: Settings) -> str:
     p = s.profile
     s.run_id = s.run_id or f"{s.tier}-{s.policy}{'-shadow' if s.shadow else ''}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
     adapter = make_adapter(s)
-    prom = Prometheus(s.prom_url, s.window, s.container)
+    usage = None
+    if s.tier == "vm":       # CPU/memory from the container's cgroup when possible, else from cAdvisor
+        try:
+            usage = CgroupUsage(s.container)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            log.warning("cgroup CPU reader unavailable (%s); using cAdvisor via Prometheus", exc)
+    prom = Prometheus(s.prom_url, s.window, s.container, usage=usage)
     policy, model_name = make_policy(s)
     guards = Guards(p["min_units"], p["max_units"], s.cooldown_down_s)
     db = DecisionLog(s.db_path)

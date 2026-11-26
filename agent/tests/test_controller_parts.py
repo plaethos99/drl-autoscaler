@@ -101,3 +101,21 @@ def test_log_report_and_mu(tmp_path):
     assert s["sla_violation_pct"] == pytest.approx(100 / 3, abs=0.01)
     assert s["avg_units"] == 1 and s["cost"] == pytest.approx(2.0)
     assert estimate_mu(db_path, "r1") == 9
+
+
+def test_cgroup_usage_reads_cpu_and_memory(tmp_path):
+    from autoscaler.adapters.vm_docker import CgroupUsage
+    from autoscaler.prom import Prometheus
+    fake_docker = tmp_path / "docker"
+    fake_docker.write_text("#!/bin/sh\necho abc123\n")
+    fake_docker.chmod(0o755)
+    cg = tmp_path / "cg" / "system.slice" / "docker-abc123.scope"
+    cg.mkdir(parents=True)
+    (cg / "cpu.stat").write_text("usage_usec 1000000\nuser_usec 900000\n")
+    (cg / "memory.current").write_text("2048\n")
+    usage = CgroupUsage("imgsvc-classifier", docker=str(fake_docker), root=str(tmp_path / "cg"))
+    (cg / "cpu.stat").write_text("usage_usec 3000000\nuser_usec 2000000\n")
+    cores, mem = usage.read()
+    assert cores > 0 and mem == 2048
+    prom = Prometheus("http://127.0.0.1:9", "15s", "imgsvc-classifier", usage=usage)
+    assert "cpu_cores" not in prom.q and "mem_bytes" not in prom.q

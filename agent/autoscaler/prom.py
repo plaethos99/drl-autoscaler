@@ -32,10 +32,13 @@ def queries(window: str, container: str) -> dict[str, str]:
 
 
 class Prometheus:
-    def __init__(self, url: str, window: str, container: str, timeout_s: float = 2.0):
+    def __init__(self, url: str, window: str, container: str, timeout_s: float = 2.0, usage=None):
         self.url = url.rstrip("/") + "/api/v1/query"
         self.q = queries(window, container)
         self.timeout_s = timeout_s
+        self.usage = usage          # optional: object with read() -> (cpu cores, memory bytes), e.g. CgroupUsage
+        if usage is not None:
+            del self.q["cpu_cores"], self.q["mem_bytes"]
         self.session = requests.Session()
 
     def scalar(self, query: str) -> float:
@@ -54,6 +57,8 @@ class Prometheus:
 
     def read(self) -> Metrics:
         v = {k: self.scalar(q) for k, q in self.q.items()}
+        if self.usage is not None:
+            v["cpu_cores"], v["mem_bytes"] = self.usage.read()
         # No traffic -> rate/histogram are empty: treat as zero load, base latency unknown (0).
         rps = 0.0 if math.isnan(v["rps"]) else v["rps"]
         p95 = v["p95_ms"]

@@ -3,7 +3,9 @@
 plus room for the other containers (see agent/README.md for the instance size)."""
 from __future__ import annotations
 
+import os
 import subprocess
+import time
 
 
 class DockerCpuAdapter:
@@ -24,3 +26,35 @@ class DockerCpuAdapter:
 
     def set_units(self, units: int) -> None:
         self._run("update", "--cpus", f"{units * self.cpus_per_unit:.3f}", self.container)
+
+
+class CgroupUsage:
+    """The container's CPU (cores, averaged since the previous read) and memory, read straight from
+    cgroup v2. Used instead of cAdvisor, which on recent Docker/Ubuntu 24.04 may not label containers by
+    name (Prometheus then has no CPU series for the classifier). Same host as the controller."""
+
+    def __init__(self, container: str, docker: str = "docker", root: str = "/sys/fs/cgroup"):
+        cid = subprocess.run([docker, "inspect", "-f", "{{.Id}}", container], capture_output=True,
+                             text=True, timeout=15).stdout.strip()
+        candidates = [f"{root}/system.slice/docker-{cid}.scope", f"{root}/docker/{cid}"]
+        self.path = next((c for c in candidates if cid and os.path.exists(f"{c}/cpu.stat")), None)
+        if self.path is None:
+            raise RuntimeError(f"no cgroup v2 directory for {container} (tried {candidates})")
+        self._last = (time.monotonic(), self._usage_s())
+
+    def _usage_s(self) -> float:
+        with open(f"{self.path}/cpu.stat") as f:
+            for line in f:
+                key, value = line.split()
+                if key == "usage_usec":
+                    return int(value) / 1e6
+        raise RuntimeError(f"usage_usec missing in {self.path}/cpu.stat")
+
+    def read(self) -> tuple[float, float]:
+        now, used = time.monotonic(), self._usage_s()
+        t0, u0 = self._last
+        self._last = (now, used)
+        cores = (used - u0) / max(now - t0, 1e-3)
+        with open(f"{self.path}/memory.current") as f:
+            mem = float(f.read().strip() or 0)
+        return cores, mem
