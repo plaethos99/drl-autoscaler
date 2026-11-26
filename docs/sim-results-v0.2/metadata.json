@@ -1,0 +1,163 @@
+{
+  "version": "v0.2-vm-calibrated-aws-azure-trace",
+  "obs_window_steps": 3,
+  "train_patterns": [
+    "steady",
+    "periodic",
+    "ramp",
+    "spike",
+    "paper5min",
+    "azure_trace"
+  ],
+  "heldout_patterns": [
+    "double_spike",
+    "sawtooth",
+    "noisy_trace",
+    "azure_trace_test"
+  ],
+  "trace_dataset": {
+    "name": "Azure Functions Invocation Trace 2021",
+    "license": "CC-BY 4.0",
+    "url": "https://raw.githubusercontent.com/plaethos99/drl-autoscaler/ce976e2/training/data/azure2021_windows.csv.gz",
+    "windows": {
+      "train": 401,
+      "test": 203
+    },
+    "citation": "Zhang et al., Faster and Cheaper Serverless Computing on Harvested Resources, SOSP 2021"
+  },
+  "created": "2026-11-26 15:54:14",
+  "decision_interval_s": 5.0,
+  "episode_steps": 60,
+  "sla_p95_ms": 500.0,
+  "action_deltas": [
+    -2,
+    -1,
+    0,
+    1,
+    2
+  ],
+  "ddpg_action_mapping": "delta = clip(round(a*2), -2, 2)",
+  "observation": [
+    "cpu_util",
+    "mem_util",
+    "queue_norm",
+    "p95_over_sla",
+    "rps_over_capacity",
+    "rps_trend",
+    "units_over_max",
+    "pending_over_max",
+    "cold_start_frac"
+  ],
+  "reward_weights": {
+    "W_SLA": 1.0,
+    "W_COST": 0.5,
+    "W_DROP": 2.0,
+    "W_ACT": 0.02
+  },
+  "profiles": {
+    "k8s": {
+      "min_units": 1,
+      "max_units": 10,
+      "mu": [
+        15.0,
+        22.0
+      ],
+      "overhead_ms": [
+        20.0,
+        40.0
+      ],
+      "startup_steps": [
+        1,
+        4
+      ],
+      "unit_cost": 1.0,
+      "cold_ms": [
+        0.0,
+        0.0
+      ],
+      "max_queue_s": 10.0
+    },
+    "vm": {
+      "min_units": 1,
+      "max_units": 8,
+      "mu": [
+        3.5,
+        4.1
+      ],
+      "overhead_ms": [
+        10.0,
+        25.0
+      ],
+      "startup_steps": [
+        0,
+        0
+      ],
+      "unit_cost": 0.5,
+      "cold_ms": [
+        0.0,
+        0.0
+      ],
+      "max_queue_s": 10.0,
+      "latency": "shared",
+      "k_service": 2.0,
+      "k_queue": 3.0
+    },
+    "function": {
+      "min_units": 0,
+      "max_units": 20,
+      "mu": [
+        6.0,
+        9.0
+      ],
+      "overhead_ms": [
+        30.0,
+        60.0
+      ],
+      "startup_steps": [
+        1,
+        2
+      ],
+      "unit_cost": 0.6,
+      "cold_ms": [
+        300.0,
+        1500.0
+      ],
+      "max_queue_s": 10.0,
+      "ondemand_cost": 0.25,
+      "keepalive_steps": [
+        6,
+        12
+      ],
+      "concurrency_limit": 40
+    }
+  },
+  "net_arch": [
+    128,
+    128
+  ],
+  "timesteps": 150000,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "best": {
+    "k8s": {
+      "algo": "DDPG",
+      "seed": 1,
+      "mean_eval_reward": -26.591344011170346
+    },
+    "vm": {
+      "algo": "DDPG",
+      "seed": 2,
+      "mean_eval_reward": -26.32720248933767
+    },
+    "function": {
+      "algo": "DDPG",
+      "seed": 2,
+      "mean_eval_reward": -18.119840256722394
+    }
+  }
+}
