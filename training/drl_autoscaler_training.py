@@ -11,7 +11,8 @@
 # 5. Saves models, metadata, CSV results and plots to the output folder (download it, then
 #    publish the best model as a GitHub Release).
 #
-# Kaggle settings: **Accelerator = None (CPU)** is enough. **Internet = On** (for pip install).
+# Kaggle settings: **Internet = On** (for pip install). Accelerator: GPU is optional. DQN/DDPG use it
+# when present (`DEVICE=auto`), PPO always runs on CPU. Training runs in parallel, one process per CPU core.
 #
 # NOTE: profile numbers (req/s per replica, startup time, cold start, ...) are placeholders until
 # Phase 2 calibration on real clouds. Update `PROFILES` with measured ranges and retrain.
@@ -43,6 +44,8 @@ SEEDS = [0, 1, 2]                   # use 5 seeds for the final paper run
 TIMESTEPS = 150_000                 # per (mode, algo, seed)
 EVAL_EPISODES = 10                  # per pattern per method
 NET_ARCH = [128, 128]               # same MLP for every algorithm (fair comparison)
+DEVICE = os.environ.get("DEVICE", "auto")             # DQN/DDPG device: auto (GPU if present), cpu, cuda
+N_WORKERS = int(os.environ.get("N_WORKERS", os.cpu_count() or 1))   # parallel training processes
 
 if QUICK:
     MODES, SEEDS, TIMESTEPS, EVAL_EPISODES = ["k8s"], [0], 6_000, 3
@@ -410,47 +413,75 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.noise import NormalActionNoise
 
-torch.set_num_threads(max(1, os.cpu_count() or 1))
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 def make_model(algo, mode, seed, log_dir):
     pk = dict(net_arch=NET_ARCH)
-    if algo == "PPO":
+    if algo == "PPO":   # small MLP on-policy: CPU is faster than GPU (SB3 recommendation)
         venv = make_vec_env(lambda: CloudScalingEnv(mode), n_envs=8, seed=seed, monitor_dir=log_dir)
         return PPO("MlpPolicy", venv, n_steps=512, batch_size=256, learning_rate=3e-4, gamma=0.99,
-                   gae_lambda=0.95, ent_coef=0.01, clip_range=0.2, policy_kwargs=pk, seed=seed, verbose=0)
+                   gae_lambda=0.95, ent_coef=0.01, clip_range=0.2, policy_kwargs=pk, seed=seed, verbose=0,
+                   device="cpu")
     if algo == "DQN":
         env = Monitor(CloudScalingEnv(mode), os.path.join(log_dir, "0"))
         return DQN("MlpPolicy", env, learning_rate=5e-4, buffer_size=100_000, learning_starts=2_000,
                    batch_size=128, gamma=0.99, train_freq=4, target_update_interval=1_000,
-                   exploration_fraction=0.3, exploration_final_eps=0.02, policy_kwargs=pk, seed=seed, verbose=0)
+                   exploration_fraction=0.3, exploration_final_eps=0.02, policy_kwargs=pk, seed=seed, verbose=0,
+                   device=DEVICE)
     if algo == "DDPG":
+        # train_freq=4 / gradient_steps=1: same update ratio as DQN. SB3's default (update every step) made
+        # DDPG ~6x slower than DQN without a fair-comparison reason.
         env = Monitor(CloudScalingEnv(mode, continuous=True), os.path.join(log_dir, "0"))
         noise = NormalActionNoise(mean=np.zeros(1), sigma=0.3 * np.ones(1))
         return DDPG("MlpPolicy", env, learning_rate=1e-3, buffer_size=100_000, learning_starts=2_000,
-                    batch_size=128, gamma=0.99, action_noise=noise,
-                    policy_kwargs=dict(net_arch=dict(pi=NET_ARCH, qf=NET_ARCH)), seed=seed, verbose=0)
+                    batch_size=128, gamma=0.99, action_noise=noise, train_freq=4, gradient_steps=1,
+                    policy_kwargs=dict(net_arch=dict(pi=NET_ARCH, qf=NET_ARCH)), seed=seed, verbose=0,
+                    device=DEVICE)
     raise ValueError(algo)
 
 
-train_log = []
-for mode in MODES:
-    for algo in ALGOS:
-        for seed in SEEDS:
-            run = f"{mode}_{algo}_s{seed}"
-            log_dir = os.path.join(OUT_DIR, "logs", run)
-            os.makedirs(log_dir, exist_ok=True)
-            t0 = time.time()
-            model = make_model(algo, mode, seed, log_dir)
-            model.learn(total_timesteps=TIMESTEPS, progress_bar=False)
-            path = os.path.join(OUT_DIR, "models", f"{run}.zip")
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            model.save(path)
-            mins = (time.time() - t0) / 60
-            train_log.append(dict(mode=mode, algo=algo, seed=seed, minutes=round(mins, 2), path=path))
-            print(f"trained {run:22s} in {mins:5.1f} min")
+def train_one(job):
+    mode, algo, seed = job
+    torch.set_num_threads(1)   # one core per process; parallelism comes from the process pool
+    run = f"{mode}_{algo}_s{seed}"
+    log_dir = os.path.join(OUT_DIR, "logs", run)
+    os.makedirs(log_dir, exist_ok=True)
+    t0 = time.time()
+    model = make_model(algo, mode, seed, log_dir)
+    model.learn(total_timesteps=TIMESTEPS, progress_bar=False)
+    path = os.path.join(OUT_DIR, "models", f"{run}.zip")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    model.save(path)
+    mins = (time.time() - t0) / 60
+    return dict(mode=mode, algo=algo, seed=seed, device=str(model.device), minutes=round(mins, 2), path=path)
 
-pd.DataFrame(train_log).to_csv(os.path.join(OUT_DIR, "train_log.csv"), index=False)
+
+# slowest algorithms first so the pool stays busy at the end
+COST_ORDER = {"DDPG": 0, "DQN": 1, "PPO": 2}
+jobs = sorted([(m, a, s) for m in MODES for a in ALGOS for s in SEEDS], key=lambda j: COST_ORDER[j[1]])
+print(f"{len(jobs)} training runs on {N_WORKERS} worker(s), DQN/DDPG device={DEVICE}")
+t_all = time.time()
+train_log = []
+if N_WORKERS > 1:
+    # fork keeps everything defined above (works in notebooks); CUDA is never initialised in the parent
+    with ProcessPoolExecutor(max_workers=N_WORKERS, mp_context=mp.get_context("fork")) as pool:
+        futures = [pool.submit(train_one, j) for j in jobs]
+        for fut in as_completed(futures):
+            r = fut.result()
+            train_log.append(r)
+            print(f"[{len(train_log):2d}/{len(jobs)}] trained {r['mode']}_{r['algo']}_s{r['seed']:<3} "
+                  f"on {r['device']:4s} in {r['minutes']:5.1f} min", flush=True)
+else:
+    for j in jobs:
+        r = train_one(j)
+        train_log.append(r)
+        print(f"[{len(train_log):2d}/{len(jobs)}] trained {r['mode']}_{r['algo']}_s{r['seed']:<3} "
+              f"on {r['device']:4s} in {r['minutes']:5.1f} min", flush=True)
+print(f"all training done in {(time.time() - t_all) / 60:.1f} min")
+
+pd.DataFrame(train_log).sort_values(["mode", "algo", "seed"]).to_csv(os.path.join(OUT_DIR, "train_log.csv"), index=False)
 
 # %% [markdown]
 # ## 7. Evaluation in simulation (seen + held-out patterns, same seeds for every method)

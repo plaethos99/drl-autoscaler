@@ -1,0 +1,60 @@
+"""Controller settings. Defaults match the simulator (training/drl_autoscaler_training.py) and the VM tier
+in apps/image-service/docker-compose.yml. Every field can be overridden with an env var or a CLI flag."""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+
+# Must match the simulator: one decision every 5 s, SLA = p95 <= 500 ms.
+DT_S = 5.0
+SLA_P95_MS = 500.0
+
+# Per-tier constants from the simulator's PROFILES (the model was trained with these).
+TIERS = {
+    # unit = 0.5 vCPU of the classifier container's cgroup quota; 1..8 units = 0.5..4 cores
+    "vm": dict(min_units=1, max_units=8, cpus_per_unit=0.5, unit_cost=0.5),
+}
+
+
+def _env(name: str, default: str) -> str:
+    return os.getenv(name, default)
+
+
+@dataclass
+class Settings:
+    tier: str = "vm"
+    policy: str = "rl"                 # rl | threshold | static
+    shadow: bool = False               # rl: compute + log decisions, but never apply them
+    duration_s: float = 0.0            # 0 = run until stopped
+    run_id: str = ""
+
+    # model (GitHub Release asset + metadata.json)
+    model_release: str = field(default_factory=lambda: _env("MODEL_RELEASE", "model-v0.1"))
+    model_repo: str = field(default_factory=lambda: _env("MODEL_REPO", "plaethos99/drl-autoscaler"))
+    model_dir: str = field(default_factory=lambda: _env("MODEL_DIR", os.path.expanduser("~/.cache/drl-autoscaler")))
+
+    # Prometheus + what to read
+    prom_url: str = field(default_factory=lambda: _env("PROM_URL", "http://127.0.0.1:9090"))
+    window: str = field(default_factory=lambda: _env("PROM_WINDOW", "15s"))   # >= 3 scrapes at 5 s
+    container: str = field(default_factory=lambda: _env("TARGET_CONTAINER", "imgsvc-classifier"))
+
+    # Requests/s one unit serves within the SLA. The simulator's VM profile samples 8..11 (placeholder);
+    # set the measured value after calibration (scripts/run_test.sh calibrate).
+    mu_per_unit: float = field(default_factory=lambda: float(_env("MU_PER_UNIT", "9.5")))
+
+    # safety guards
+    cooldown_down_s: float = field(default_factory=lambda: float(_env("COOLDOWN_DOWN_S", "0")))
+    max_failed_reads: int = 3          # after this many bad Prometheus reads in a row, hold + log
+    start_units: int = 0               # 0 = keep the current allocation at start
+
+    # threshold (HPA-like) baseline
+    hpa_target: float = 0.70
+    hpa_tolerance: float = 0.10
+    hpa_window: int = 6                # scale down only after 6 steps (30 s) agree
+    static_units: int = 0              # 0 = half of max (as in the simulator)
+
+    db_path: str = field(default_factory=lambda: _env("DECISION_DB", "decisions.sqlite"))
+
+    @property
+    def profile(self) -> dict:
+        return TIERS[self.tier]

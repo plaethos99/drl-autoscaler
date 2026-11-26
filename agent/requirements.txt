@@ -1,0 +1,5 @@
+numpy>=1.26
+requests>=2.31
+# RL policy only (installs PyTorch; use the CPU wheel index on the VM, see scripts/ec2-setup.sh)
+stable-baselines3>=2.3
+gymnasium>=0.29

@@ -1,0 +1,52 @@
+# Controller (agent)
+
+Every 5 s the controller reads Prometheus, asks a policy for a target allocation, passes it through
+safety guards, applies it to the tier and logs the decision to SQLite.
+
+```
+Prometheus ──> state (9 values, same as training) ──> policy ──> guards ──> adapter ──> tier
+                                                   rl | threshold | static        docker update --cpus
+                                                                     └──> decisions.sqlite
+```
+
+| File | What |
+|---|---|
+| `autoscaler/modelstore.py` | Downloads `<tier>_best.zip` and `metadata.json` from a GitHub Release (`model-v0.1`) and loads them with Stable-Baselines3 |
+| `autoscaler/state.py` | Builds the observation in `metadata.json` order with the simulator's scaling (sim-to-real notes in the docstring) |
+| `autoscaler/prom.py` | The PromQL queries (gateway rps and p95, classifier in-flight, cAdvisor CPU and memory) |
+| `autoscaler/policies.py` | `rl`, `threshold` (HPA-like, 70 % CPU target, 30 s scale-down window) and `static` (4 units) |
+| `autoscaler/guards.py` | Min/max, ±2 units per step, optional scale-down cooldown. Bad metric reads hold the current allocation |
+| `autoscaler/adapters/vm_docker.py` | VM tier: 1 unit = 0.5 vCPU of the classifier's cgroup quota (1..8 units) |
+| `autoscaler/report.py` | Per-run SLA violation %, p95, average units, cost and actions; `mu` estimates capacity per unit |
+| `scripts/ec2-setup.sh` | EC2 user data: Docker, the app stack, a venv with the controller and Locust |
+| `scripts/run_test.sh` | One 5-minute test: reset the classifier, run Locust and the controller, then print the summary |
+
+Shadow mode (`--shadow`) logs what the model would do without changing anything. Use it before
+letting the model act on a new tier.
+
+## First test on AWS (VM tier, one instance)
+
+1. **Budget alarm** (Billing → Budgets), for example $10 per month.
+2. **Launch an instance:** Ubuntu 24.04, **c6i.2xlarge** (8 vCPU, about $0.34/h in us-east-1), 20 GB disk.
+   Paste `scripts/ec2-setup.sh` into *Advanced details → User data*. No inbound ports are needed:
+   connect with *EC2 Instance Connect* or *Session Manager*. Setup takes about 5–8 minutes.
+   `tail -f /var/log/drl-setup.log` shows progress, and `/opt/drl-setup-done` appears at the end.
+3. **Run the tests** as `ubuntu` (about 6 minutes each):
+   ```bash
+   cd /opt/drl-autoscaler/agent/scripts
+   ./run_test.sh calibrate                 # prints e.g. export MU_PER_UNIT=11.80
+   export MU_PER_UNIT=...                  # use the printed value for every run below
+   ./run_test.sh rl-shadow                 # sanity check: model decisions logged, nothing applied
+   ./run_test.sh rl                        # model in control
+   ./run_test.sh threshold                 # HPA-like baseline
+   ./run_test.sh static                    # fixed allocation baseline
+   /opt/venv/bin/python -m autoscaler report --db ~/results/decisions.sqlite --csv ~/results/summary.csv
+   ```
+4. **Terminate the instance** when finished (its results are in `~/results`; copy them off first).
+
+## Caveat for v0.1
+
+The model was trained on placeholder profiles. `MU_PER_UNIT` scales the request-rate inputs to the
+measured capacity, but startup behaviour and the latency curve still come from the simulator. This
+test checks that the whole loop works and shows how far the simulator is from reality. The numbers
+for the paper come from v0.2, trained after calibration.
