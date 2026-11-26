@@ -1,7 +1,7 @@
 # Deploying the VM-tier testbed on AWS
 
 This guide rebuilds the setup used for the AWS results in
-[`aws-results-2026-11-26`](aws-results-2026-11-26/README.md): the image service with the RL controller and
+[`aws-results-v0.2`](aws-results-v0.2/README.md) and [`aws-results-2026-11-26`](aws-results-2026-11-26/README.md): the image service with the RL controller and
 the demo dashboard on one EC2 instance, and the load generator on a second one. All of it can be done from
 the AWS web console. Nothing is installed by hand; each instance sets itself up on first boot from a script
 in this repository.

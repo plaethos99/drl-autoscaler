@@ -11,7 +11,7 @@ benchmarked against Kubernetes HPA and round-robin (static) allocation.
 | `loadgen/` | Locust 5-minute load scenarios (same shapes as the simulator) | 4 |
 | `agent/` | Controller: RL agent + safety guards + adapters (VM now; functions / K8s next) and the live demo dashboard | 3 |
 | `infra/` *(next)* | Terraform for AWS, Azure, GCP | 3 |
-| `docs/` | [AWS deployment guide](docs/DEPLOY.md) and [AWS results](docs/aws-results-2026-11-26/README.md) | 3, 4 |
+| `docs/` | [AWS deployment guide](docs/DEPLOY.md) and AWS results for [model-v0.2](docs/aws-results-v0.2/README.md) and [model-v0.1](docs/aws-results-2026-11-26/README.md), [simulation results](docs/sim-results-v0.2/README.md) | 3, 4 |
 
 Trained models are published as GitHub Releases (`model-v*`).
 

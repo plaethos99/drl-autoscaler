@@ -27,8 +27,8 @@ letting the model act on a new tier.
 ## Running it on AWS
 
 Step-by-step guide (two instances, firewall, the measured runs, the dashboard demo, stop/start and
-troubleshooting): [docs/DEPLOY.md](../docs/DEPLOY.md). Results from 2026-11-26:
-[docs/aws-results-2026-11-26](../docs/aws-results-2026-11-26/README.md).
+troubleshooting): [docs/DEPLOY.md](../docs/DEPLOY.md). Results: [model-v0.2](../docs/aws-results-v0.2/README.md) (5 rounds, generated and real traffic) and
+[model-v0.1](../docs/aws-results-2026-11-26/README.md).
 
 ## Live demo dashboard
 
