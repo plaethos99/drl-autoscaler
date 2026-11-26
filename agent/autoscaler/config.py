@@ -11,8 +11,12 @@ SLA_P95_MS = 500.0
 
 # Per-tier constants from the simulator's PROFILES (the model was trained with these).
 TIERS = {
-    # unit = 0.5 vCPU of the classifier container's cgroup quota; 1..8 units = 0.5..4 cores
-    "vm": dict(min_units=1, max_units=8, cpus_per_unit=0.5, unit_cost=0.5),
+    # unit = 0.5 vCPU of the classifier container's cgroup quota; 1..8 units = 0.5..4 cores.
+    # CPUS_PER_UNIT shrinks the unit on a small box (ec2-setup.sh sets 0.125 on a 2-vCPU instance, so
+    # 8 units = 1 core). The model only sees normalised values, so it is unaffected once MU_PER_UNIT
+    # is calibrated at the same unit size.
+    "vm": dict(min_units=1, max_units=8, cpus_per_unit=float(os.getenv("CPUS_PER_UNIT", "0.5")),
+               unit_cost=0.5),
 }
 
 

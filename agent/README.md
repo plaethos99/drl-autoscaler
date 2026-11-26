@@ -28,8 +28,9 @@ letting the model act on a new tier.
 
 1. **Budget alarm** (Billing → Budgets), for example $10 per month.
 2. **Launch an instance:** Ubuntu 24.04, **c6i.2xlarge** (8 vCPU, about $0.34/h in us-east-1), 20 GB disk.
-   Paste `scripts/ec2-setup.sh` into *Advanced details → User data*. No inbound ports are needed:
-   connect with *EC2 Instance Connect* or *Session Manager*. Setup takes about 5–8 minutes.
+   Paste `scripts/ec2-setup.sh` into *Advanced details → User data*. For *EC2 Instance Connect*, allow
+   SSH (port 22) only from the `com.amazonaws.<region>.ec2-instance-connect` prefix list; no other
+   inbound ports are needed. Setup takes about 5–8 minutes.
    `tail -f /var/log/drl-setup.log` shows progress, and `/opt/drl-setup-done` appears at the end.
 3. **Run the tests** as `ubuntu` (about 6 minutes each):
    ```bash

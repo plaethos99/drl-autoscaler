@@ -23,4 +23,4 @@ class DockerCpuAdapter:
         return max(1, round(nano / 1e9 / self.cpus_per_unit))
 
     def set_units(self, units: int) -> None:
-        self._run("update", "--cpus", f"{units * self.cpus_per_unit:.2f}", self.container)
+        self._run("update", "--cpus", f"{units * self.cpus_per_unit:.3f}", self.container)

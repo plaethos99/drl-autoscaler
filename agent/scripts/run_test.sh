@@ -9,7 +9,8 @@
 #   ./run_test.sh static    [scenario] # fixed 4 units (2 cores), the simulator's static baseline
 #
 # scenario: paper5min (default) | steady | periodic | ramp | spike | double_spike | sawtooth
-# Env: MU_PER_UNIT (default 9.5), PEAK_USERS (default from MU), DURATION_S (300), START_UNITS (2)
+# Env: MU_PER_UNIT (default 9.5), PEAK_USERS (default from MU), DURATION_S (300), START_UNITS (2),
+#      CPUS_PER_UNIT (0.5; ec2-setup.sh sets 0.125 on a 2-vCPU box via /etc/profile.d/drl-autoscaler.sh)
 set -euo pipefail
 
 DIR=/opt/drl-autoscaler
@@ -21,7 +22,8 @@ DURATION="${DURATION_S:-300}"
 START_UNITS="${START_UNITS:-2}"
 RESULTS="${RESULTS:-$HOME/results}"
 mkdir -p "$RESULTS"
-export DECISION_DB="$RESULTS/decisions.sqlite" MU_PER_UNIT="$MU"
+CPU_UNIT="${CPUS_PER_UNIT:-0.5}"
+export DECISION_DB="$RESULTS/decisions.sqlite" MU_PER_UNIT="$MU" CPUS_PER_UNIT="$CPU_UNIT"
 
 # Load that matches training: simulator peak = 80 % of capacity at max allocation (8 units).
 # Each Locust user sends ~1 request per (1 s + latency), so users ≈ rps × 1.25.
@@ -38,8 +40,8 @@ esac
 PEAK="${PEAK_USERS:-$PEAK_DEFAULT}"
 RUN_ID="vm-${POLICY}-${SCENARIO}-$(date +%Y%m%d-%H%M%S)"
 
-echo "== $RUN_ID: start units $START, peak users $PEAK, MU_PER_UNIT $MU"
-docker update --cpus "$(python3 -c "print($START * 0.5)")" imgsvc-classifier >/dev/null
+echo "== $RUN_ID: start units $START x $CPU_UNIT vCPU, peak users $PEAK, MU_PER_UNIT $MU"
+docker update --cpus "$(python3 -c "print($START * $CPU_UNIT)")" imgsvc-classifier >/dev/null
 echo "   30 s idle so the previous run's traffic leaves the Prometheus windows..."
 sleep 30
 

@@ -2,7 +2,9 @@
 # One-box VM-tier test machine: image service + Prometheus + cAdvisor + Locust + controller.
 # Paste as EC2 "User data" (runs as root on first boot) on Ubuntu 24.04, or run with sudo.
 # Instance: c6i.2xlarge (8 vCPU). The classifier needs up to 4 cores (8 units x 0.5); the rest
-# (gateway, resizer, Locust, controller) uses the other 4. Progress: /var/log/drl-setup.log
+# (gateway, resizer, Locust, controller) uses the other 4. On a smaller box (e.g. the Free Plan's
+# 2-vCPU m7i-flex.large) the unit shrinks to 0.125 vCPU, so 8 units = 1 core.
+# Progress: /var/log/drl-setup.log
 set -euxo pipefail
 exec > >(tee -a /var/log/drl-setup.log) 2>&1
 
@@ -21,11 +23,15 @@ rm -rf "$DIR"
 git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$DIR"
 chown -R ubuntu:ubuntu "$DIR"
 
-# App stack (VM tier compose file). Gateway and resizer get 1 core each so the classifier is the
+# Unit size: 0.5 vCPU on 8+ vCPU (as in the simulator), 0.125 vCPU on smaller boxes.
+if [ "$(nproc)" -ge 8 ]; then CPU_UNIT=0.5; SIDE_CPUS=1.0; else CPU_UNIT=0.125; SIDE_CPUS=0.5; fi
+echo "export CPUS_PER_UNIT=$CPU_UNIT" > /etc/profile.d/drl-autoscaler.sh
+
+# App stack (VM tier compose file). Gateway and resizer get a fixed share so the classifier is the
 # bottleneck the agent controls.
 cd "$DIR/apps/image-service"
 IMAGE="$IMAGE" docker compose up -d
-docker update --cpus 1.0 imgsvc-gateway imgsvc-resizer
+docker update --cpus "$SIDE_CPUS" imgsvc-gateway imgsvc-resizer
 
 # Controller + Locust in one venv (CPU-only PyTorch keeps it ~1 GB smaller).
 python3 -m venv /opt/venv
@@ -46,4 +52,4 @@ for name in ("metadata.json", "vm_best.zip"):
 EOF
 
 touch /opt/drl-setup-done
-echo "setup finished"
+echo "setup finished ($(nproc) vCPU, CPUS_PER_UNIT=$CPU_UNIT)"
