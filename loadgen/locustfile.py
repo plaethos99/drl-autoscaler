@@ -5,7 +5,7 @@ Run on the load-generator VM (not on the app or controller VM):
       --headless --csv results/<tier>_<method>_<scenario>_run1 --csv-full-history
 
 Scenarios: paper5min (default) | steady | periodic | ramp | spike | double_spike | sawtooth
-SCENARIO=manual: no load shape; the user count is set from Locust's web UI or API (the demo dashboard).
+IMAGE_SET=small|large: upload sizes (see SIZES). SCENARIO=manual: no load shape; the user count is set from Locust's web UI or API (the demo dashboard).
 Each simulated user sends one image, waits ~1 s, repeats -> requests/s ≈ users / (1 s + latency).
 """
 import io
@@ -23,12 +23,20 @@ DURATION_S = int(os.getenv("DURATION_S", "300"))
 SEED = int(os.getenv("SEED", "42"))
 
 
+# IMAGE_SET=small (default): phone-sized uploads, so the resizer stays cheap and the classifier (the tier the
+# autoscaler controls) is the bottleneck. IMAGE_SET=large: the original 640-1280 px photos, which saturate the
+# resizer at ~35 req/s on the 2-vCPU test box (the first AWS runs on 2026-11-26 used these).
+IMAGE_SET = os.getenv("IMAGE_SET", "small")
+SIZES = {"small": [(320, 240), (400, 300), (480, 360), (360, 360), (427, 320)],
+         "large": [(640, 480), (800, 600), (1024, 768), (1280, 720), (600, 600)]}[IMAGE_SET]
+
+
 def _make_images(n: int = 50, seed: int = SEED) -> list[bytes]:
     """Synthetic photos (random sizes, shapes and colours) so no dataset download is needed."""
     rng = random.Random(seed)
     images = []
     for _ in range(n):
-        w, h = rng.choice([(640, 480), (800, 600), (1024, 768), (1280, 720), (600, 600)])
+        w, h = rng.choice(SIZES)
         img = Image.new("RGB", (w, h), tuple(rng.randint(0, 255) for _ in range(3)))
         draw = ImageDraw.Draw(img)
         for _ in range(rng.randint(5, 25)):

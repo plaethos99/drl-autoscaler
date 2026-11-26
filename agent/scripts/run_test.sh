@@ -10,7 +10,8 @@
 #
 # scenario: paper5min (default) | steady | periodic | ramp | spike | double_spike | sawtooth
 # Env: MU_PER_UNIT (default 9.5), PEAK_USERS (default from MU), DURATION_S (300), START_UNITS (2),
-#      CPUS_PER_UNIT (0.5; ec2-setup.sh sets 0.125 on a 2-vCPU box via /etc/profile.d/drl-autoscaler.sh)
+#      CPUS_PER_UNIT (0.5; ec2-setup.sh sets 0.125 on a 2-vCPU box via /etc/profile.d/drl-autoscaler.sh),
+#      LOADGEN_URL (Locust on the load-generator box; install-dashboard.sh sets it in /etc/profile.d)
 set -euo pipefail
 
 DIR=/opt/drl-autoscaler
@@ -51,9 +52,15 @@ cd "$DIR/agent"
 CTRL=$!
 sleep 1   # first decision happens with no load (baseline step)
 
-SCENARIO="$SCENARIO" PEAK_USERS="$PEAK" DURATION_S="$DURATION" \
-  "$VENV/bin/locust" -f "$DIR/loadgen/locustfile.py" --host http://127.0.0.1:8080 --headless \
-  --csv "$RESULTS/$RUN_ID" --csv-full-history --only-summary > "$RESULTS/$RUN_ID.locust.log" 2>&1 || true
+if [ -n "${LOADGEN_URL:-}" ]; then
+  # Load from the separate load-generator box (its Locust runs in manual mode; the shape is played from here).
+  "$VENV/bin/python" -m dashboard.drive --url "$LOADGEN_URL" --scenario "$SCENARIO" --peak "$PEAK" \
+    --duration "$DURATION" > "$RESULTS/$RUN_ID.locust.log" 2>&1 || true
+else
+  SCENARIO="$SCENARIO" PEAK_USERS="$PEAK" DURATION_S="$DURATION" \
+    "$VENV/bin/locust" -f "$DIR/loadgen/locustfile.py" --host http://127.0.0.1:8080 --headless \
+    --csv "$RESULTS/$RUN_ID" --csv-full-history --only-summary > "$RESULTS/$RUN_ID.locust.log" 2>&1 || true
+fi
 
 wait "$CTRL" || { echo "controller failed, see $RESULTS/$RUN_ID.controller.log"; tail -20 "$RESULTS/$RUN_ID.controller.log"; exit 1; }
 
@@ -62,4 +69,5 @@ echo "== Summary"
 if [ "$POLICY" = calibrate ]; then
   "$VENV/bin/python" -m autoscaler mu "$RUN_ID"
 fi
-echo "Locust totals:"; grep -E "Aggregated|/process" "$RESULTS/${RUN_ID}_stats.csv" | head -2 || true
+echo "Locust totals:"; grep -hE "Aggregated|/process|locust totals" "$RESULTS/${RUN_ID}_stats.csv" \
+  "$RESULTS/$RUN_ID.locust.log" 2>/dev/null | head -2 || true

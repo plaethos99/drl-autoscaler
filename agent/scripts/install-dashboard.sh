@@ -25,6 +25,10 @@ EOF
 elif [ -n "$LOADGEN_URL" ]; then
   sed -i "s#^LOADGEN_URL=.*#LOADGEN_URL=$LOADGEN_URL#" "$ENV_FILE"
 fi
+# Scripted runs (run_test.sh) use the same load generator when it is a separate box.
+if [ -n "$LOADGEN_URL" ] && [ "$LOADGEN_URL" != "http://127.0.0.1:8089" ]; then
+  echo "export LOADGEN_URL=$LOADGEN_URL" > /etc/profile.d/drl-loadgen.sh
+fi
 
 cat > /etc/systemd/system/drl-dashboard.service <<EOF
 [Unit]
