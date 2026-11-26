@@ -4,9 +4,9 @@ name: agent
 on:
   push:
     branches: [main]
-    paths: ["agent/**", ".github/workflows/agent.yml"]
+    paths: ["agent/**", "loadgen/**", ".github/workflows/agent.yml"]
   pull_request:
-    paths: ["agent/**", ".github/workflows/agent.yml"]
+    paths: ["agent/**", "loadgen/**", ".github/workflows/agent.yml"]
   workflow_dispatch:
 
 permissions:
@@ -20,6 +20,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install numpy requests pytest
+      - run: pip install numpy requests pytest flask
       - run: python -m pytest -q
-      - run: bash -n scripts/ec2-setup.sh && bash -n scripts/run_test.sh && bash -n scripts/run_all.sh
+      - run: bash -n scripts/ec2-setup.sh && bash -n scripts/run_test.sh && bash -n scripts/run_all.sh && bash -n scripts/install-dashboard.sh && bash -n scripts/loadgen-setup.sh

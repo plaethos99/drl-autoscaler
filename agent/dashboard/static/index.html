@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DRL Autoscaler · live demo</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1c2430; --muted: #5d6b7c; --line: #e3e7ec;
+    --accent: #2f6fde; --ok: #1f9d55; --bad: #d64545; --c1: #2f6fde; --c2: #e07b24; --c3: #7c5cd6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12161c; --card: #1a2029; --text: #e6ebf1; --muted: #93a1b3; --line: #2b3440;
+            --accent: #6a9cf5; --ok: #46c07b; --bad: #f07070; --c1: #6a9cf5; --c2: #f0a050; --c3: #a990f0; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 18px 24px 6px; }
+  h1 { font-size: 20px; margin: 0; }
+  header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 12px 24px 24px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  select, input[type=number] { width: 100%; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { flex: 1; padding: 7px 4px; border: 0; background: var(--bg); color: var(--text); font: inherit; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .row { display: flex; gap: 8px; margin-top: 14px; }
+  .btn { flex: 1; padding: 9px; border-radius: 6px; border: 1px solid var(--line); font: inherit; font-weight: 600; cursor: pointer; background: var(--bg); color: var(--text); }
+  .btn.go { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .btn.stop { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  #manual { display: none; }
+  #manual input { width: 100%; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .status { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
+  .stat b { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .stat span { display: block; font-size: 12px; color: var(--muted); }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--line); }
+  .pill.live { background: var(--ok); color: #fff; }
+  .err { color: var(--bad); font-size: 13px; margin-top: 6px; }
+  .charts { display: grid; gap: 12px; }
+  .legend { font-size: 12px; color: var(--muted); display: flex; gap: 14px; margin-bottom: 2px; }
+  .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+  svg { width: 100%; height: 170px; display: block; }
+  svg text { fill: var(--muted); font-size: 11px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  .full { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DRL Autoscaler · live demo</h1>
+  <p id="sub">VM tier on AWS EC2: the policy sets the image classifier's CPU allocation every 5 s.</p>
+</header>
+<main>
+  <section class="card">
+    <h2>Run</h2>
+    <label>Method</label>
+    <div class="seg" id="method"></div>
+    <label for="scenario">Traffic scenario</label>
+    <select id="scenario"></select>
+    <label for="peak">Peak simulated users</label>
+    <input id="peak" type="number" min="1" max="400">
+    <label for="duration">Duration</label>
+    <select id="duration"><option value="180">3 min</option><option value="300" selected>5 min</option><option value="600">10 min</option></select>
+    <div id="manual">
+      <label for="users">Users now: <b id="usersv">0</b></label>
+      <input id="users" type="range" min="0" max="100" value="10">
+      <div class="hint">Drag to add or remove load; the controller reacts within a few seconds.</div>
+    </div>
+    <div class="row">
+      <button class="btn go" id="start">▶ Start</button>
+      <button class="btn stop" id="stop" disabled>■ Stop</button>
+    </div>
+    <div class="err" id="err"></div>
+    <div class="hint" id="scenhint"></div>
+  </section>
+
+  <section class="charts">
+    <div class="card">
+      <div class="status">
+        <span class="pill" id="pill">idle</span>
+        <div class="stat"><b id="s-rps">–</b><span>requests/s</span></div>
+        <div class="stat"><b id="s-p95">–</b><span>p95 latency (ms)</span></div>
+        <div class="stat"><b id="s-units">–</b><span>CPU units allocated</span></div>
+        <div class="stat"><b id="s-users">–</b><span>simulated users</span></div>
+        <div class="stat"><b id="s-time">–</b><span>elapsed</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Traffic</h2>
+      <div class="legend"><span><i style="background:var(--c1)"></i>requests/s served</span></div>
+      <svg id="c-rps"></svg>
+    </div>
+    <div class="card">
+      <h2>Latency</h2>
+      <div class="legend"><span><i style="background:var(--c2)"></i>p95 latency (ms)</span><span><i style="background:var(--bad)"></i>SLA</span></div>
+      <svg id="c-p95"></svg>
+    </div>
+    <div class="card">
+      <h2>Allocation</h2>
+      <div class="legend"><span><i style="background:var(--c3)"></i>units allocated</span><span><i style="background:var(--c1)"></i>CPU used (in units)</span></div>
+      <svg id="c-units"></svg>
+    </div>
+  </section>
+
+  <section class="card full">
+    <h2>Runs (newest first)</h2>
+    <table>
+      <thead><tr><th>Method</th><th>Scenario</th><th>Steps</th><th>SLA violations %</th><th>Mean p95 ms</th><th>Avg units</th><th>Cost</th><th>Scaling actions</th></tr></thead>
+      <tbody id="runs"><tr><td colspan="8">No runs yet.</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const NAMES = { rl: "RL (DDPG)", threshold: "Threshold (HPA-like)", static: "Static" };
+const HINTS = {
+  manual: "You set the load with the slider while the run is going.",
+  spike: "Quiet, then a 6x burst from 40% to 53% of the run, then quiet again.",
+  double_spike: "Two short bursts.", ramp: "Load grows steadily.", periodic: "Three waves.",
+  sawtooth: "Repeated climbs and drops.", steady: "Constant half load.",
+  paper5min: "Quiet, ramp, flash-sale spike, then waves (the paper's scenario)."
+};
+let cfg, method = "rl", lastRun = null, slideTimer = null;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} :
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function chart(svg, xs, lines, { ymax, ref, xmax }) {
+  const W = svg.clientWidth || 600, H = svg.clientHeight || 170, L = 42, R = 10, T = 8, B = 22;
+  const vals = lines.flatMap(l => l.ys.filter(v => v != null));
+  const top = ymax || Math.max(1, ...vals, ref || 0) * 1.15;
+  const xm = Math.max(xmax || 0, ...xs, 30);
+  const X = x => L + (W - L - R) * x / xm, Y = y => T + (H - T - B) * (1 - Math.min(y, top) / top);
+  let g = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = top * i / 4, y = Y(v);
+    g += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="var(--line)"/>` +
+         `<text x="${L - 6}" y="${y + 4}" text-anchor="end">${v >= 100 ? Math.round(v) : +v.toFixed(1)}</text>`;
+  }
+  const step = xm > 400 ? 120 : 60;
+  for (let s = 0; s <= xm; s += step)
+    g += `<text x="${X(s)}" y="${H - 6}" text-anchor="middle">${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}</text>`;
+  if (ref) g += `<line x1="${L}" x2="${W - R}" y1="${Y(ref)}" y2="${Y(ref)}" stroke="var(--bad)" stroke-dasharray="5 4"/>`;
+  for (const l of lines) {
+    let d = "", prev = null;
+    xs.forEach((x, i) => {
+      const v = l.ys[i];
+      if (v == null) { prev = null; return; }
+      if (prev == null) d += `M${X(x)},${Y(v)}`;
+      else if (l.step) d += `H${X(x)}V${Y(v)}`;
+      else d += `L${X(x)},${Y(v)}`;
+      prev = v;
+    });
+    g += `<path d="${d}" fill="none" stroke="${l.color}" stroke-width="2"/>`;
+  }
+  svg.innerHTML = g;
+}
+
+function draw(st) {
+  const rows = st.series || [];
+  const t0 = rows.length ? rows[0].ts : 0;
+  const xs = rows.map(r => r.ts - t0);
+  const xmax = st.run && st.run.scenario !== "manual" ? st.run.duration_s : 0;
+  chart($("#c-rps"), xs, [{ ys: rows.map(r => r.rps), color: "var(--c1)" }], { xmax });
+  chart($("#c-p95"), xs, [{ ys: rows.map(r => r.p95_ms), color: "var(--c2)" }],
+        { xmax, ref: cfg.sla_ms, ymax: Math.max(cfg.sla_ms * 2, Math.min(4000, Math.max(0, ...rows.map(r => r.p95_ms || 0)) * 1.15)) });
+  chart($("#c-units"), xs, [
+    { ys: rows.map(r => r.units_after), color: "var(--c3)", step: true },
+    { ys: rows.map(r => r.cpu_cores == null ? null : r.cpu_cores / cfg.cpus_per_unit), color: "var(--c1)" }
+  ], { xmax, ymax: cfg.max_units + 0.5 });
+  const last = rows[rows.length - 1];
+  $("#s-rps").textContent = last && last.rps != null ? last.rps.toFixed(1) : "–";
+  const p = $("#s-p95");
+  p.textContent = last && last.p95_ms != null ? Math.round(last.p95_ms) : "–";
+  p.style.color = last && last.p95_ms > cfg.sla_ms ? "var(--bad)" : "";
+  $("#s-units").textContent = last ? `${last.units_after} / ${cfg.max_units}` : "–";
+  $("#s-users").textContent = st.running ? st.target_users : (st.locust.ok ? st.locust.users : "–");
+  const el = st.run ? st.run.elapsed_s : (rows.length ? xs[xs.length - 1] : null);
+  $("#s-time").textContent = el == null ? "–" : `${Math.floor(el / 60)}:${String(Math.floor(el % 60)).padStart(2, "0")}`;
+}
+
+async function refreshRuns() {
+  const runs = await api("/api/runs");
+  $("#runs").innerHTML = runs.length ? runs.map(r => `<tr><td>${NAMES[r.method] || r.method}</td><td>${r.scenario}</td>
+    <td>${r.steps}</td><td>${r.sla_violation_pct}</td><td>${r.mean_p95_ms}</td><td>${r.avg_units}</td>
+    <td>${r.cost}</td><td>${r.scaling_actions}</td></tr>`).join("") : `<tr><td colspan="8">No runs yet.</td></tr>`;
+}
+
+async function refresh() {
+  let st;
+  try { st = await api("/api/state"); } catch (e) { $("#err").textContent = e.message; return; }
+  const running = st.running;
+  $("#pill").textContent = running ? `live · ${NAMES[st.run.method]} · ${st.run.scenario}` : "idle";
+  $("#pill").className = "pill" + (running ? " live" : "");
+  $("#start").disabled = running; $("#stop").disabled = !running;
+  $("#manual").style.display = running && st.run.scenario === "manual" ? "block" : "none";
+  $("#err").textContent = st.error || (st.locust.ok ? "" : "Load generator not reachable: " + st.locust.error);
+  draw(st);
+  if (lastRun !== (st.run && st.run.run_id)) { lastRun = st.run && st.run.run_id; refreshRuns(); }
+}
+
+async function init() {
+  cfg = await api("/api/config");
+  $("#sub").textContent += ` Unit = ${cfg.cpus_per_unit} vCPU, 1–${cfg.max_units} units, SLA p95 ≤ ${cfg.sla_ms} ms, measured capacity ${cfg.mu_per_unit} req/s per unit.`;
+  $("#method").innerHTML = cfg.methods.map(m => `<button data-m="${m}" class="${m === method ? "on" : ""}">${NAMES[m]}</button>`).join("");
+  $("#method").onclick = e => { const m = e.target.dataset.m; if (!m) return; method = m;
+    document.querySelectorAll("#method button").forEach(b => b.classList.toggle("on", b.dataset.m === m)); };
+  $("#scenario").innerHTML = cfg.scenarios.map(s => `<option ${s === "spike" ? "selected" : ""}>${s}</option>`).join("");
+  const hint = () => $("#scenhint").textContent = HINTS[$("#scenario").value] || "";
+  $("#scenario").onchange = hint; hint();
+  $("#peak").value = cfg.default_peak_users;
+  $("#users").max = cfg.default_peak_users * 2;
+  $("#start").onclick = async () => {
+    $("#err").textContent = "";
+    try {
+      await api("/api/start", { method, scenario: $("#scenario").value, peak_users: +$("#peak").value, duration_s: +$("#duration").value });
+      $("#users").value = Math.max(1, Math.floor(+$("#peak").value / 4)); $("#usersv").textContent = $("#users").value;
+    } catch (e) { $("#err").textContent = e.message; }
+    refresh();
+  };
+  $("#stop").onclick = async () => { $("#stop").disabled = true; await api("/api/stop", {}).catch(() => {}); refresh(); refreshRuns(); };
+  $("#users").oninput = () => {
+    $("#usersv").textContent = $("#users").value;
+    clearTimeout(slideTimer);
+    slideTimer = setTimeout(() => api("/api/users", { users: +$("#users").value }).catch(e => $("#err").textContent = e.message), 250);
+  };
+  refresh(); refreshRuns();
+  setInterval(refresh, 2500);
+  setInterval(refreshRuns, 15000);
+}
+init();
+</script>
+</body>
+</html>

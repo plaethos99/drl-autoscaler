@@ -51,5 +51,8 @@ for name in ("metadata.json", "vm_best.zip"):
     print("model file:", fetch(s.model_repo, s.model_release, name, s.model_dir))
 EOF
 
+# Demo dashboard on :8501 (systemd service drl-dashboard; login in ~ubuntu/dashboard-login.txt).
+bash "$DIR/agent/scripts/install-dashboard.sh" || echo "dashboard install failed (see above)"
+
 touch /opt/drl-setup-done
 echo "setup finished ($(nproc) vCPU, CPUS_PER_UNIT=$CPU_UNIT)"

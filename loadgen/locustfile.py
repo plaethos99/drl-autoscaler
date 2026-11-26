@@ -5,15 +5,17 @@ Run on the load-generator VM (not on the app or controller VM):
       --headless --csv results/<tier>_<method>_<scenario>_run1 --csv-full-history
 
 Scenarios: paper5min (default) | steady | periodic | ramp | spike | double_spike | sawtooth
+SCENARIO=manual: no load shape; the user count is set from Locust's web UI or API (the demo dashboard).
 Each simulated user sends one image, waits ~1 s, repeats -> requests/s ≈ users / (1 s + latency).
 """
 import io
-import math
 import os
 import random
 
 from locust import HttpUser, LoadTestShape, constant, task
 from PIL import Image, ImageDraw
+
+from shapes import users_at as shape_at
 
 SCENARIO = os.getenv("SCENARIO", "paper5min")
 PEAK_USERS = int(os.getenv("PEAK_USERS", "100"))
@@ -44,28 +46,8 @@ IMAGES = _make_images()
 
 
 def users_at(t: float) -> float:
-    """Fraction of PEAK_USERS at second t of a 300 s run (scaled if DURATION_S differs)."""
-    s = t * 300.0 / DURATION_S
-    if SCENARIO == "steady":
-        return 0.5
-    if SCENARIO == "periodic":                       # 3 waves
-        return 0.2 + 0.35 * (1 + math.sin(2 * math.pi * 3 * s / 300))
-    if SCENARIO == "ramp":
-        return 0.1 + 0.8 * s / 300
-    if SCENARIO == "spike":
-        return 0.95 if 120 <= s < 160 else 0.15
-    if SCENARIO == "double_spike":
-        return 0.95 if (70 <= s < 95 or 200 <= s < 225) else 0.15
-    if SCENARIO == "sawtooth":
-        return 0.15 + 0.7 * ((s % 75) / 75)
-    # paper5min: quiet -> ramp -> flash-sale spike -> waves
-    if s < 60:
-        return 0.15
-    if s < 120:
-        return 0.15 + (0.5 - 0.15) * (s - 60) / 60
-    if s < 180:
-        return 0.95
-    return 0.35 + 0.2 * math.sin(2 * math.pi * (s - 180) / 40)
+    """Fraction of PEAK_USERS at second t (shapes live in shapes.py, shared with the demo dashboard)."""
+    return shape_at(t, SCENARIO, DURATION_S)
 
 
 class ImageUser(HttpUser):
@@ -81,10 +63,11 @@ class ImageUser(HttpUser):
                 resp.success()
 
 
-class ScenarioShape(LoadTestShape):
-    def tick(self):
-        t = self.get_run_time()
-        if t >= DURATION_S:
-            return None
-        users = max(1, round(PEAK_USERS * users_at(t)))
-        return users, max(10, users)      # (target users, spawn rate per second) -> near-instant changes
+if SCENARIO != "manual":
+    class ScenarioShape(LoadTestShape):
+        def tick(self):
+            t = self.get_run_time()
+            if t >= DURATION_S:
+                return None
+            users = max(1, round(PEAK_USERS * users_at(t)))
+            return users, max(10, users)      # (target users, spawn rate per second) -> near-instant changes

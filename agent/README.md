@@ -45,6 +45,20 @@ letting the model act on a new tier.
    ```
 4. **Terminate the instance** when finished (its results are in `~/results`; copy them off first).
 
+## Live demo dashboard
+
+`dashboard/` is a small web page (Flask, port 8501, login `examiner` + the password in
+`~ubuntu/dashboard-login.txt`) that runs on the app box. Pick a method (RL, threshold, static) and a traffic
+scenario (spike, ramp, … or *manual* with a users slider), press **Start**, and watch requests/s, p95 latency
+against the SLA, and the allocated CPU units update every few seconds. Each run is summarised in the table
+below the graphs. Demo runs go to `~/demo/decisions.sqlite`, separate from the paper's `~/results`.
+
+The load comes from Locust on a second small instance (`scripts/loadgen-setup.sh` as its user data, with
+`APP_HOST` = the app box's private IP), so the load generator doesn't take CPU from the service being measured.
+Then point the dashboard at it: `sudo bash scripts/install-dashboard.sh http://<loadgen-private-ip>:8089`.
+Security group: 8501 open for the dashboard (login protected, plain HTTP, so use a throwaway password);
+8080 and 8089 only between the two instances.
+
 ## Caveat for v0.1
 
 The model was trained on placeholder profiles. `MU_PER_UNIT` scales the request-rate inputs to the
