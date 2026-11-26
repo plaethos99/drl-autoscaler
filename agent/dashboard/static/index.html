@@ -135,7 +135,10 @@ const HINTS = {
   spike: "Quiet, then a 6x burst from 40% to 53% of the run, then quiet again.",
   double_spike: "Two short bursts.", ramp: "Load grows steadily.", periodic: "Three waves.",
   sawtooth: "Repeated climbs and drops.", steady: "Constant half load.",
-  paper5min: "Quiet, ramp, flash-sale spike, then waves (the paper's scenario)."
+  paper5min: "Quiet, ramp, flash-sale spike, then waves (the paper's scenario).",
+  azure_calm: "Real traffic: a calm 5-minute window from the Azure Functions 2021 trace (held out from training).",
+  azure_typical: "Real traffic: a typical 5-minute window from the Azure Functions 2021 trace (held out from training).",
+  azure_bursty: "Real traffic: a bursty 5-minute window from the Azure Functions 2021 trace (held out from training)."
 };
 let cfg, method = "rl", lastRun = null, slideTimer = null;
 

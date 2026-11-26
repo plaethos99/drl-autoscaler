@@ -3,6 +3,7 @@
 Only the simulator part of drl_autoscaler_training.py (sections 1-3) is executed, not the training.
 """
 import math
+import os
 from pathlib import Path
 
 import gymnasium as gym
@@ -12,7 +13,7 @@ from gymnasium import spaces
 
 SRC = (Path(__file__).resolve().parents[1] / "drl_autoscaler_training.py").read_text(encoding="utf-8")
 START, END = "# ## 1. Simulation constants", "# ## 4. Baselines"
-NS = dict(np=np, math=math, gym=gym, spaces=spaces)
+NS = dict(np=np, math=math, os=os, gym=gym, spaces=spaces)
 exec(compile(SRC[SRC.index(START):SRC.index(END)], "simulator", "exec"), NS)
 Env, PROFILES = NS["CloudScalingEnv"], NS["PROFILES"]
 
@@ -26,6 +27,26 @@ def test_episode_runs_and_observations_are_finite(mode):
         obs, reward, term, trunc, info = env.step(env.action_space.sample())
         assert np.isfinite(obs).all() and math.isfinite(reward)
     assert trunc
+
+
+def test_azure_trace_patterns_are_loaded_and_split_by_time():
+    import csv
+    import gzip
+    windows = NS["TRACE_WINDOWS"]
+    assert len(windows["train"]) > 100 and len(windows["test"]) > 50
+    assert "azure_trace" in NS["TRAIN_PATTERNS"] and "azure_trace_test" in NS["HELDOUT_PATTERNS"]
+    assert "azure_trace_test" not in NS["TRAIN_PATTERNS"]
+    rows = list(csv.DictReader(gzip.open(Path(__file__).resolve().parents[1] / "data" / NS["TRACE_FILE"], "rt")))
+    last_train = max(int(r["start_s"]) for r in rows if r["split"] == "train")
+    first_test = min(int(r["start_s"]) for r in rows if r["split"] == "test")
+    assert last_train < first_test                            # held-out windows come strictly later
+    rng = np.random.default_rng(0)
+    for pattern in ("azure_trace", "azure_trace_test"):
+        rps = NS["gen_workload"](pattern, NS["EPISODE_STEPS"], 20.0, rng)
+        assert rps.shape == (NS["EPISODE_STEPS"],) and rps.min() >= 0.5 and rps.max() <= 22.0
+    env = Env(mode="vm", patterns=["azure_trace"])
+    env.reset(seed=3)
+    assert env.pattern == "azure_trace"
 
 
 def test_observation_has_no_lookahead():

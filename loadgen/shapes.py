@@ -1,13 +1,29 @@
-"""Load shapes shared by the Locust file and the demo dashboard (same shapes as the simulator's workloads)."""
-import math
+"""Load shapes shared by the Locust file and the demo dashboard (same shapes as the simulator's workloads).
 
-SCENARIOS = ["paper5min", "steady", "periodic", "ramp", "spike", "double_spike", "sawtooth"]
+The azure_* scenarios replay held-out 5-minute windows of real traffic from the Azure Functions Invocation
+Trace 2021 (CC-BY 4.0; see training/build_trace_windows.py), stored in traces.json next to this file.
+"""
+import json
+import math
+import os
+
+_TRACES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "traces.json")
+try:
+    with open(_TRACES_PATH) as _f:
+        TRACES = {k: v["shape"] for k, v in json.load(_f).items() if not k.startswith("_")}
+except (OSError, ValueError, KeyError):
+    TRACES = {}
+
+SCENARIOS = ["paper5min", "steady", "periodic", "ramp", "spike", "double_spike", "sawtooth"] + sorted(TRACES)
 
 
 def users_at(t: float, scenario: str = "paper5min", duration_s: float = 300.0) -> float:
     """Fraction of the peak user count at second t of a run (shapes are defined on 300 s and stretched
     to duration_s)."""
     s = t * 300.0 / duration_s
+    if scenario in TRACES:                           # 60 points, one per 5 s of the 300 s window
+        shape = TRACES[scenario]
+        return max(0.03, shape[min(int(s // 5), len(shape) - 1)])
     if scenario == "steady":
         return 0.5
     if scenario == "periodic":                       # 3 waves

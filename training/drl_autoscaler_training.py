@@ -90,20 +90,61 @@ PROFILES = {
 }
 
 # %% [markdown]
-# ## 2. Synthetic workload generator
+# ## 2. Workloads: generated patterns + a real traffic dataset
 #
-# Training patterns: `steady`, `periodic`, `ramp`, `spike`, `paper5min`.
-# Held-out patterns (never seen in training): `double_spike`, `sawtooth`, `noisy_trace`.
+# Generated training patterns: `steady`, `periodic`, `ramp`, `spike`, `paper5min`.
+# Generated held-out patterns (never seen in training): `double_spike`, `sawtooth`, `noisy_trace`.
+#
+# Real traffic: **Azure Functions Invocation Trace 2021** (Azure Public Dataset, CC-BY 4.0; Zhang et al.,
+# "Faster and Cheaper Serverless Computing on Harvested Resources", SOSP 2021): 1.98 M invocations of 119
+# apps over 14 days, cut into 5-minute windows of 60 × 5 s (`training/build_trace_windows.py`).
+# `azure_trace` trains on windows from days 1–10; `azure_trace_test` is held out (days 11–14).
+# Each window is scaled so its busiest 5 s reach 70–100 % of the generated patterns' peak.
 
 # %%
-TRAIN_PATTERNS = ["steady", "periodic", "ramp", "spike", "paper5min"]
-HELDOUT_PATTERNS = ["double_spike", "sawtooth", "noisy_trace"]
+TRACE_FILE = "azure2021_windows.csv.gz"
+TRACE_URL = os.environ.get(   # pinned to the commit that built the windows, for reproducibility
+    "TRACE_URL", "https://raw.githubusercontent.com/plaethos99/drl-autoscaler/ce976e2/training/data/" + TRACE_FILE)
+
+
+def load_trace_windows():
+    """{'train': array (n, 60), 'test': array (m, 60)} of peak-normalised request counts, or {} if missing."""
+    import csv, gzip, io, os, urllib.request
+    raw = None
+    for path in (os.path.join("data", TRACE_FILE), os.path.join("training", "data", TRACE_FILE)):
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                raw = f.read()
+            break
+    if raw is None:
+        try:
+            raw = urllib.request.urlopen(TRACE_URL, timeout=60).read()
+        except Exception as exc:                    # no internet: train on generated patterns only
+            print("Azure trace windows unavailable, using generated patterns only:", exc)
+            return {}
+    rows = list(csv.DictReader(io.StringIO(gzip.decompress(raw).decode())))
+    cols = [f"w{j:02d}" for j in range(60)]
+    out = {s: np.array([[float(r[c]) for c in cols] for r in rows if r["split"] == s]) for s in ("train", "test")}
+    print(f"Azure trace windows: {len(out['train'])} train, {len(out['test'])} held-out")
+    return out
+
+
+TRACE_WINDOWS = load_trace_windows()
+TRAIN_PATTERNS = ["steady", "periodic", "ramp", "spike", "paper5min"] + (["azure_trace"] if TRACE_WINDOWS else [])
+HELDOUT_PATTERNS = ["double_spike", "sawtooth", "noisy_trace"] + (["azure_trace_test"] if TRACE_WINDOWS else [])
 
 
 def gen_workload(pattern, steps, peak, rng):
     """Return requests/second for each step. `peak` ~ max load the tier can serve."""
     t = np.arange(steps)
     base = peak * rng.uniform(0.10, 0.25)
+    if pattern in ("azure_trace", "azure_trace_test"):
+        windows = TRACE_WINDOWS["train" if pattern == "azure_trace" else "test"]
+        shape = windows[rng.integers(len(windows))]
+        if len(shape) != steps:
+            shape = np.interp(np.linspace(0, len(shape) - 1, steps), np.arange(len(shape)), shape)
+        # real traffic already has its own noise: no extra multiplicative noise
+        return np.clip(peak * rng.uniform(0.7, 1.0) * shape, 0.5, peak * 1.1)
     if pattern == "steady":
         rps = np.full(steps, peak * rng.uniform(0.2, 0.7))
     elif pattern == "periodic":
@@ -552,8 +593,13 @@ for mode in MODES:
     print(f"{mode}: best = {algo} (seed {seed})  algo ranking: {by_algo.round(2).to_dict()}")
 
 metadata = dict(
-    version="v0.2-vm-calibrated-aws",
+    version="v0.2-vm-calibrated-aws-azure-trace",
     obs_window_steps=OBS_WINDOW_STEPS,
+    train_patterns=TRAIN_PATTERNS, heldout_patterns=HELDOUT_PATTERNS,
+    trace_dataset=dict(name="Azure Functions Invocation Trace 2021", license="CC-BY 4.0", url=TRACE_URL,
+                       windows={k: len(v) for k, v in TRACE_WINDOWS.items()},
+                       citation="Zhang et al., Faster and Cheaper Serverless Computing on Harvested Resources, "
+                                "SOSP 2021") if TRACE_WINDOWS else None,
     created=time.strftime("%Y-%m-%d %H:%M:%S"),
     decision_interval_s=DT, episode_steps=EPISODE_STEPS, sla_p95_ms=SLA_P95_MS,
     action_deltas=ACTION_DELTAS.tolist(),
