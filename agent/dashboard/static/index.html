@@ -15,7 +15,8 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
-  header { padding: 18px 24px 6px; }
+  header { padding: 18px 24px 6px; display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; }
+  header form button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
   h1 { font-size: 20px; margin: 0; }
   header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
   main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 12px 24px 24px; }
@@ -56,8 +57,11 @@
 </head>
 <body>
 <header>
-  <h1>DRL Autoscaler · live demo</h1>
-  <p id="sub">VM tier on AWS EC2: the policy sets the image classifier's CPU allocation every 5 s.</p>
+  <div>
+    <h1>DRL Autoscaler · live demo</h1>
+    <p id="sub">VM tier on AWS EC2: the policy sets the image classifier's CPU allocation every 5 s.</p>
+  </div>
+  <form method="post" action="/logout"><button type="submit">Sign out</button></form>
 </header>
 <main>
   <section class="card">
@@ -135,6 +139,7 @@ let cfg, method = "rl", lastRun = null, slideTimer = null;
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} :
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (r.status === 401) { location.href = "/login"; throw new Error("login required"); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;

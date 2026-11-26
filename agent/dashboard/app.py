@@ -5,10 +5,12 @@ allocation live. Runs on the app box next to the controller.
   SCENARIO=manual so the dashboard sets the user count every 2 s from loadgen/shapes.py).
 * Control: starts `python -m autoscaler run` as a subprocess with the chosen policy.
 * Data: the controller's SQLite log (DASH_DB, separate from the paper's ~/results database).
-* Access: HTTP basic auth (DASH_USER / DASH_PASSWORD), port DASH_PORT (8501).
+* Access: a login page (DASH_USER / DASH_PASSWORD) that sets a session cookie; scripts can send the same
+  credentials with HTTP basic auth (`curl -u`). Port DASH_PORT (8501).
 """
 from __future__ import annotations
 
+import datetime
 import hmac
 import os
 import signal
@@ -20,7 +22,7 @@ import time
 from pathlib import Path
 
 import requests
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_from_directory, session
 
 AGENT_DIR = Path(__file__).resolve().parents[1]
 REPO_DIR = AGENT_DIR.parent
@@ -207,17 +209,49 @@ class Demo:
                     series=self.series(self.last_run_id))
 
 
-def create_app(demo: Demo, user: str, password: str) -> Flask:
+def create_app(demo: Demo, user: str, password: str, secret_key: bytes | None = None) -> Flask:
     app = Flask(__name__, static_folder=str(Path(__file__).with_name("static")))
+    # A new random key per start is fine: a restart only means signing in again.
+    app.config.update(SECRET_KEY=secret_key or os.urandom(32), SESSION_COOKIE_HTTPONLY=True,
+                      SESSION_COOKIE_SAMESITE="Strict", PERMANENT_SESSION_LIFETIME=datetime.timedelta(hours=12))
     cpus_per_unit = TIERS["vm"]["cpus_per_unit"]
+
+    def _valid(u: str | None, p: str | None) -> bool:
+        return hmac.compare_digest(u or "", user) & hmac.compare_digest(p or "", password)
 
     @app.before_request
     def _auth():
-        a = request.authorization
-        if not (a and hmac.compare_digest(a.username or "", user)
-                and hmac.compare_digest(a.password or "", password)):
-            return Response("Login required", 401, {"WWW-Authenticate": 'Basic realm="DRL autoscaler demo"'})
-        return None
+        if request.endpoint in ("login_page", "login", "static"):
+            return None
+        if session.get("user") == user:
+            return None
+        a = request.authorization                   # scripts: curl -u examiner:<password> (no browser pop-up)
+        if a and _valid(a.username, a.password):
+            return None
+        if request.path.startswith("/api/"):
+            return jsonify(error="login required"), 401
+        return redirect("/login")
+
+    @app.get("/login")
+    def login_page():
+        if session.get("user") == user:
+            return redirect("/")
+        return send_from_directory(app.static_folder, "login.html")
+
+    @app.post("/login")
+    def login():
+        if _valid(request.form.get("username"), request.form.get("password")):
+            session.clear()
+            session["user"] = user
+            session.permanent = True
+            return redirect("/", code=303)
+        time.sleep(1.0)                             # slows down password guessing
+        return redirect("/login?error=1", code=303)
+
+    @app.post("/logout")
+    def logout():
+        session.clear()
+        return redirect("/login", code=303)
 
     @app.get("/")
     def index():
@@ -272,5 +306,6 @@ def main() -> None:
         sys.exit("set DASH_PASSWORD (scripts/install-dashboard.sh writes one to /etc/drl-dashboard.env)")
     db = os.getenv("DASH_DB", str(Path.home() / "demo" / "decisions.sqlite"))
     demo = Demo(Locust(os.getenv("LOADGEN_URL", "http://127.0.0.1:8089")), db, measured_mu())
-    app = create_app(demo, os.getenv("DASH_USER", "examiner"), password)
+    secret = os.getenv("DASH_SECRET", "").encode() or None
+    app = create_app(demo, os.getenv("DASH_USER", "examiner"), password, secret)
     app.run(host="0.0.0.0", port=int(os.getenv("DASH_PORT", "8501")), threaded=True)

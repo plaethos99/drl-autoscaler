@@ -182,15 +182,15 @@ Do not use the dashboard while the measured runs are going: both drive the same 
 
 ## Step 6: Demo with the dashboard
 
-Open `http://<drl-vm-test public IPv4>:8501` in a normal browser (Edge, Chrome, Firefox). The browser asks
-for a username and password: user **examiner**, password from:
+Open `http://<drl-vm-test public IPv4>:8501` in any browser. The dashboard shows its sign-in page: user
+**examiner**, password from:
 
 ```bash
 cat ~/dashboard-login.txt
 ```
 
-Some embedded browser views (for example an in-app browser pane) do not show that sign-in prompt and only
-display "Login required"; use a regular browser window.
+The session lasts 12 hours (or until the dashboard restarts); **Sign out** is at the top right. Scripts can
+call the dashboard's API with the same credentials as HTTP basic auth (`curl -u examiner:<password> …`).
 
 In the dashboard:
 
@@ -249,6 +249,7 @@ check before measuring there.
 | `permission denied … docker.sock` in your terminal | Your login started before setup added you to the `docker` group: use `sudo docker …`, or reconnect. |
 | Controller log: "no CPU series for the target container" | cAdvisor cannot label containers on this Docker version. The controller reads cgroup v2 directly; make sure the repo is up to date (`git -C /opt/drl-autoscaler pull`). |
 | Calibration prints "no usable MU_PER_UNIT" | No step stayed within the SLA at the calibration allocation. Raise `CAL_UNITS` (default 4) or lower `CAL_PEAK_USERS` (default 40). |
+| Signed out after an update | The dashboard picks a new session key at every restart; sign in again (set `DASH_SECRET` in `/etc/drl-dashboard.env` to keep sessions). |
 | Dashboard shows "Load generator not reachable" | drl-loadgen is stopped, its private IP changed (re-run step 4), or the *All TCP from this security group* rule is missing. |
 | A new instance type is greyed out at launch | The Free Plan only allows free-tier types; m7i-flex.large is the largest. Upgrading the account plan unlocks the 8-vCPU types. |
 

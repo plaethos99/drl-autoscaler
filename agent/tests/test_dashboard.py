@@ -45,10 +45,29 @@ def auth(user="examiner", password="pw"):
 
 def test_login_required(demo):
     client = create_app(demo, "examiner", "pw").test_client()
-    assert client.get("/api/config").status_code == 401
+    r = client.get("/api/config")
+    assert r.status_code == 401 and "WWW-Authenticate" not in r.headers      # no browser pop-up
     assert client.get("/api/config", headers=auth(password="wrong")).status_code == 401
-    cfg = client.get("/api/config", headers=auth()).get_json()
+    cfg = client.get("/api/config", headers=auth()).get_json()               # scripts: basic auth
     assert cfg["mu_per_unit"] == 6.4 and "spike" in cfg["scenarios"] and "manual" in cfg["scenarios"]
+
+
+def test_login_page_session_and_logout(demo, monkeypatch):
+    monkeypatch.setattr("dashboard.app.time.sleep", lambda s: None)
+    client = create_app(demo, "examiner", "pw", secret_key=b"test").test_client()
+    r = client.get("/")
+    assert r.status_code == 302 and r.headers["Location"].endswith("/login")
+    assert client.get("/login").status_code == 200
+    r = client.post("/login", data={"username": "examiner", "password": "wrong"})
+    assert r.status_code == 303 and "error=1" in r.headers["Location"]
+    assert client.get("/api/config").status_code == 401
+    r = client.post("/login", data={"username": "examiner", "password": "pw"})
+    assert r.status_code == 303 and r.headers["Location"].endswith("/")
+    assert client.get("/").status_code == 200                                # session cookie now
+    assert client.get("/api/config").status_code == 200
+    assert client.get("/login").status_code == 302                           # already signed in
+    client.post("/logout")
+    assert client.get("/api/config").status_code == 401
 
 
 def test_scenario_run_drives_locust_and_stops(demo):
