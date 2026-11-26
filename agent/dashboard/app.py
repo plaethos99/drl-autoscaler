@@ -66,7 +66,8 @@ class Locust:
         try:
             s = requests.get(f"{self.url}/stats/requests", timeout=2).json()
             return dict(ok=True, state=s.get("state"), users=s.get("user_count", 0),
-                        rps=round(s.get("total_rps", 0.0), 1), fail_ratio=round(s.get("fail_ratio", 0.0), 3))
+                        rps=round(s.get("total_rps", s.get("current_rps", 0.0)) or 0.0, 1),
+                        fail_ratio=round(s.get("fail_ratio", 0.0) or 0.0, 3))
         except (requests.RequestException, ValueError) as exc:
             return dict(ok=False, error=str(exc)[:200])
 
