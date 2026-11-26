@@ -1,0 +1,11 @@
+run_id,policy,shadow,steps,sla_violation_pct,mean_p95_ms,max_p95_ms,avg_units,cost,scaling_actions,failed_reads
+vm-calibrate-ramp-20261126-100752,static,0,60,71.67,1101.9,2787.1,4.0,120.0,0,0
+vm-rl-paper5min-20261126-101323,rl,0,60,16.67,369.3,1763.6,4.85,145.5,18,0
+vm-threshold-paper5min-20261126-101856,threshold,0,60,18.33,409.2,1365.0,5.13,154.0,9,0
+vm-static-paper5min-20261126-102428,static,0,60,41.67,717.4,2381.8,4.0,120.0,0,0
+vm-rl-paper5min-20261126-102959,rl,0,60,23.33,366.5,954.2,4.82,144.5,22,0
+vm-threshold-paper5min-20261126-103532,threshold,0,60,6.67,289.6,1150.0,6.02,180.5,15,0
+vm-static-paper5min-20261126-104104,static,0,60,38.33,650.0,2475.0,4.0,120.0,0,0
+vm-rl-paper5min-20261126-104635,rl,0,60,10.0,344.8,1202.3,4.83,145.0,24,0
+vm-threshold-paper5min-20261126-105208,threshold,0,60,18.33,362.5,1187.5,5.38,161.5,12,0
+vm-static-paper5min-20261126-105739,static,0,60,35.0,677.8,2495.8,4.0,120.0,0,0
