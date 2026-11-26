@@ -14,8 +14,9 @@
 # Kaggle settings: **Internet = On** (for pip install). Accelerator: GPU is optional. DQN/DDPG use it
 # when present (`DEVICE=auto`), PPO always runs on CPU. Training runs in parallel, one process per CPU core.
 #
-# NOTE: profile numbers (req/s per replica, startup time, cold start, ...) are placeholders until
-# Phase 2 calibration on real clouds. Update `PROFILES` with measured ranges and retrain.
+# Calibration status: the `vm` profile is fitted to real AWS runs (2026-11-26, m7i-flex.large, see
+# training/calibrate_vm.py and docs/aws-results-2026-11-26). The `k8s` and `function` numbers (req/s per
+# replica, startup time, cold start, ...) are still placeholders until they are measured the same way.
 
 # %%
 import importlib, subprocess, sys
@@ -74,9 +75,13 @@ PROFILES = {
     # unit = 1 pod replica
     "k8s": dict(min_units=1, max_units=10, mu=(15.0, 22.0), overhead_ms=(20.0, 40.0),
                 startup_steps=(1, 4), unit_cost=1.0, cold_ms=(0.0, 0.0), max_queue_s=10.0),
-    # unit = 0.5 vCPU of cgroup quota on one VM (0.5 .. 4 cores); changes apply instantly
-    "vm": dict(min_units=1, max_units=8, mu=(8.0, 11.0), overhead_ms=(10.0, 25.0),
-               startup_steps=(0, 0), unit_cost=0.5, cold_ms=(0.0, 0.0), max_queue_s=10.0),
+    # unit = a slice of one container's cgroup CPU quota (AWS testbed: 0.05 vCPU, 1..8 units); changes apply
+    # instantly. Calibrated on AWS (training/calibrate_vm.py, 584 steps, 10 runs): ONE server whose speed
+    # grows with the quota ("shared"), mu 3.7-4.1 req/s per unit across runs (3.5 from CPU time per
+    # request), overhead ~15 ms, p95 = overhead + 2.0 x service + 3.0 x queueing delay.
+    "vm": dict(min_units=1, max_units=8, mu=(3.5, 4.1), overhead_ms=(10.0, 25.0),
+               startup_steps=(0, 0), unit_cost=0.5, cold_ms=(0.0, 0.0), max_queue_s=10.0,
+               latency="shared", k_service=2.0, k_queue=3.0),
     # unit = 1 provisioned (warm) function instance; overflow runs on-demand with a cold start
     "function": dict(min_units=0, max_units=20, mu=(6.0, 9.0), overhead_ms=(30.0, 60.0),
                      startup_steps=(1, 2), unit_cost=0.6, cold_ms=(300.0, 1500.0), max_queue_s=10.0,
@@ -274,13 +279,18 @@ class CloudScalingEnv(gym.Env):
         dropped = max(0.0, self.queue - max_q)
         self.queue = min(self.queue, max_q)
 
-        # ---- latency model: pooled M/M/c queue (Sakasegawa approximation for the waiting time) ----
-        # p95 ≈ overhead + 2.3 × service time + 3 × mean queueing delay + backlog drain time
-        c = max(lat_units, 1.0)
-        rho = min((arrivals / DT) / (c * self.mu), 0.98)
-        service_ms = 1000.0 / self.mu
+        # ---- latency model: M/M/c queue (Sakasegawa approximation for the waiting time) ----
+        # p95 ≈ overhead + k_s × service time + k_q × mean queueing delay + backlog drain time
+        # "parallel" (k8s pods, function instances): c = units servers of rate mu each.
+        # "shared" (vm: one container whose CPU quota grows): one server of rate units × mu.
+        if p.get("latency") == "shared":
+            c, rate = 1.0, max(lat_units, 1e-6) * self.mu
+        else:
+            c, rate = max(lat_units, 1.0), self.mu
+        rho = min((arrivals / DT) / (c * rate), 0.98)
+        service_ms = 1000.0 / rate
         wq_ms = service_ms * rho ** (math.sqrt(2.0 * (c + 1.0)) - 1.0) / (c * (1.0 - rho))
-        p95 = self.overhead + 2.3 * service_ms + 3.0 * wq_ms
+        p95 = self.overhead + p.get("k_service", 2.3) * service_ms + p.get("k_queue", 3.0) * wq_ms
         p95 += 1000.0 * self.queue / max(lat_units * self.mu, 1e-6)          # backlog wait
         if cold_frac >= 0.05:
             p95 = max(p95, self.cold_ms + service_ms + self.overhead)

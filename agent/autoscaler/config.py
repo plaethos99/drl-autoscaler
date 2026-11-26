@@ -42,8 +42,8 @@ class Settings:
     window: str = field(default_factory=lambda: _env("PROM_WINDOW", "15s"))   # >= 3 scrapes at 5 s
     container: str = field(default_factory=lambda: _env("TARGET_CONTAINER", "imgsvc-classifier"))
 
-    # Requests/s one unit serves within the SLA. The simulator's VM profile samples 8..11 (placeholder);
-    # set the measured value after calibration (scripts/run_test.sh calibrate).
+    # Requests/s one unit serves within the SLA; set the measured value (scripts/run_test.sh calibrate).
+    # AWS 2-vCPU testbed (0.05-vCPU units): 3.5. The simulator's VM profile (v0.2+) samples 3.5..4.1.
     mu_per_unit: float = field(default_factory=lambda: float(_env("MU_PER_UNIT", "9.5")))
 
     # safety guards
