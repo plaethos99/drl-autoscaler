@@ -297,7 +297,43 @@ def create_app(demo: Demo, user: str, password: str, secret_key: bytes | None = 
         demo.stop()
         return jsonify(stopped=True)
 
+    @app.get("/api/export")
+    def export():
+        """All decision logs and summaries on this box as one zip (consistent SQLite copies)."""
+        data = export_zip(Path.home(), Path(demo.db_path))
+        name = f"drl-autoscaler-data-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+        return app.response_class(data, mimetype="application/zip",
+                                  headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
     return app
+
+
+def export_zip(home: Path, demo_db: Path) -> bytes:
+    """Zip every results folder under `home` (results*/: decisions.sqlite, summary.csv, mu.txt, logs) plus the
+    demo database. SQLite files are copied with the backup API so a run that is writing doesn't corrupt them."""
+    import io
+    import tempfile
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z, tempfile.TemporaryDirectory() as tmp:
+        sources = [(d, d.name) for d in sorted(home.glob("results*")) if d.is_dir()]
+        if demo_db.exists():
+            sources.append((demo_db.parent, "demo"))
+        for folder, arc in sources:
+            for f in sorted(folder.iterdir()):
+                if not f.is_file():
+                    continue
+                if f.suffix == ".sqlite":
+                    copy = Path(tmp) / f"{arc}-{f.name}"
+                    src, dst = sqlite3.connect(f), sqlite3.connect(copy)
+                    with dst:
+                        src.backup(dst)
+                    src.close(); dst.close()
+                    z.write(copy, f"{arc}/{f.name}")
+                elif f.suffix in (".csv", ".txt", ".log", ".out"):
+                    z.write(f, f"{arc}/{f.name}")
+    return buf.getvalue()
 
 
 def main() -> None:

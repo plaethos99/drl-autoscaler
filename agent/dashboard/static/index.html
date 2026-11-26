@@ -61,7 +61,10 @@
     <h1>DRL Autoscaler · live demo</h1>
     <p id="sub">VM tier on AWS EC2: the policy sets the image classifier's CPU allocation every 5 s.</p>
   </div>
-  <form method="post" action="/logout"><button type="submit">Sign out</button></form>
+  <div style="display:flex; gap:8px">
+    <a href="/api/export" style="padding:6px 12px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--text); font-size:13px; text-decoration:none; white-space:nowrap">Download data</a>
+    <form method="post" action="/logout"><button type="submit">Sign out</button></form>
+  </div>
 </header>
 <main>
   <section class="card">

@@ -96,6 +96,30 @@ def test_manual_users_only_in_manual_runs(demo):
     assert ("users", 25) in demo.locust.calls
 
 
+def test_export_zip_contains_results_and_demo(demo, tmp_path):
+    import io
+    import sqlite3
+    import zipfile
+
+    from dashboard.app import export_zip
+    home = tmp_path / "home"
+    (home / "results").mkdir(parents=True)
+    with sqlite3.connect(home / "results" / "decisions.sqlite") as db:
+        db.execute("CREATE TABLE t (x)")
+        db.execute("INSERT INTO t VALUES (1)")
+    (home / "results" / "summary.csv").write_text("run_id\n")
+    (home / "notes").mkdir()                               # not a results folder: left out
+    data = export_zip(home, Path(demo.db_path))
+    names = zipfile.ZipFile(io.BytesIO(data)).namelist()
+    assert "results/decisions.sqlite" in names and "results/summary.csv" in names
+    assert "demo/decisions.sqlite" in names and not any(n.startswith("notes") for n in names)
+
+    client = create_app(demo, "examiner", "pw").test_client()
+    assert client.get("/api/export").status_code == 401
+    r = client.get("/api/export", headers=auth())
+    assert r.status_code == 200 and r.mimetype == "application/zip"
+
+
 def test_bad_method_rejected(demo):
     client = create_app(demo, "examiner", "pw").test_client()
     assert client.post("/api/start", json=dict(method="magic"), headers=auth()).status_code == 400
