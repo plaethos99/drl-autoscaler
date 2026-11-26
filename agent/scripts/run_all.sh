@@ -7,8 +7,9 @@
 #   tail -f ~/run_all.log          # progress
 #   tmux attach -t drl             # live view (detach: Ctrl+B, then D)
 #
-# Env: REPEATS (3), SCENARIO (paper5min), SHADOW (1 = include one rl-shadow run),
-#      MU_PER_UNIT (skip calibration and use this value)
+# Env: REPEATS (3), SCENARIOS ("paper5min"; space-separated, e.g. "paper5min azure_typical", interleaved per
+#      round), SHADOW (1 = include one rl-shadow run), MU_PER_UNIT (skip calibration and use this value),
+#      MODEL_RELEASE (default: the controller's, model-v0.2)
 set -uo pipefail
 URL=https://raw.githubusercontent.com/plaethos99/drl-autoscaler/main/agent/scripts/run_all.sh
 SELF="$HOME/run_all.sh"
@@ -23,8 +24,9 @@ case "${1:-}" in
     echo "== $(date -u +%T) UTC: waiting for /opt/drl-setup-done"
     while [ ! -f /opt/drl-setup-done ]; do sleep 10; done
     # A fresh login picks up the docker group and CPUS_PER_UNIT (/etc/profile.d/drl-autoscaler.sh).
-    exec sudo -iu "$(id -un)" REPEATS="${REPEATS:-3}" SCENARIO="${SCENARIO:-paper5min}" SHADOW="${SHADOW:-1}" \
-      MU_PER_UNIT="${MU_PER_UNIT:-}" bash "$SELF" --tests
+    exec sudo -iu "$(id -un)" REPEATS="${REPEATS:-3}" SCENARIOS="${SCENARIOS:-${SCENARIO:-paper5min}}" \
+      SHADOW="${SHADOW:-1}" MU_PER_UNIT="${MU_PER_UNIT:-}" ${MODEL_RELEASE:+MODEL_RELEASE="$MODEL_RELEASE"} \
+      bash "$SELF" --tests
     ;;
   --tests)
     cd /opt/drl-autoscaler/agent/scripts
@@ -38,11 +40,15 @@ case "${1:-}" in
       export MU_PER_UNIT="$MU"
     fi
     echo "MU_PER_UNIT=$MU_PER_UNIT" | tee "$HOME/results/mu.txt"
-    if [ "${SHADOW:-1}" = 1 ]; then ./run_test.sh rl-shadow "$SCENARIO" || echo "== rl-shadow failed"; fi
+    echo "== model ${MODEL_RELEASE:-(controller default)}, scenarios: $SCENARIOS"
+    first="${SCENARIOS%% *}"
+    if [ "${SHADOW:-1}" = 1 ]; then ./run_test.sh rl-shadow "$first" || echo "== rl-shadow failed"; fi
     for i in $(seq 1 "$REPEATS"); do
-      for p in rl threshold static; do
-        echo "== $(date -u +%T) UTC: round $i/$REPEATS, $p"
-        ./run_test.sh "$p" "$SCENARIO" || echo "== $p round $i failed"
+      for sc in $SCENARIOS; do
+        for p in rl threshold static; do
+          echo "== $(date -u +%T) UTC: round $i/$REPEATS, $sc, $p"
+          ./run_test.sh "$p" "$sc" || echo "== $p $sc round $i failed"
+        done
       done
     done
     cd /opt/drl-autoscaler/agent
