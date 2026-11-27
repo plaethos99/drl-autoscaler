@@ -1,6 +1,7 @@
 """Fit the simulator's VM-tier latency model to real AWS decision logs (Phase 2 calibration).
 
     python training/calibrate_vm.py path/to/decisions.sqlite [--cpus-per-unit 0.05]
+    python training/calibrate_vm.py path/to/decisions.sqlite --tier k8s --cpus-per-unit 0.1   # pods
 
 Uses every 5 s step of the measured runs (calibration ramp, rl, threshold, static) with traffic, and compares
 two latency models with the same p95 formula the simulator uses,
@@ -10,6 +11,8 @@ two latency models with the same p95 formula the simulator uses,
 * "parallel"  (simulator v0.1): `units` servers of rate mu each        -> service = 1000 / mu
 * "shared"    (one container whose CPU quota grows with units):          one server of rate units * mu
                                                                        -> service = 1000 / (units * mu)
+
+k8s tier: units = *ready* pods (pods still starting serve nothing), and the run ids start with "k8s-".
 
 Each model's parameters (mu, overhead, k_s, k_q) are fitted by grid search on log(p95). Steps that are
 overloaded (backlog depends on history, not on the current state) or that hit the client timeout are left
@@ -25,11 +28,13 @@ import sqlite3
 import numpy as np
 
 
-def load(db_path: str):
+def load(db_path: str, tier: str = "vm"):
     db = sqlite3.connect(db_path)
+    cols = {r[1] for r in db.execute("PRAGMA table_info(decisions)")}
+    ready = "units_before - COALESCE(pending, 0)" if "pending" in cols else "units_before"
     rows = db.execute(
-        "SELECT run_id, rps, p95_ms, cpu_cores, units_before FROM decisions "
-        "WHERE p95_ms IS NOT NULL AND rps > 0.5 AND run_id LIKE 'vm-%' AND shadow = 0").fetchall()
+        f"SELECT run_id, rps, p95_ms, cpu_cores, {ready} FROM decisions "
+        f"WHERE p95_ms IS NOT NULL AND rps > 0.5 AND run_id LIKE '{tier}-%' AND shadow = 0").fetchall()
     run, rps, p95, cpu, units = zip(*rows)
     return np.array(run), np.array(rps, float), np.array(p95, float), np.array(cpu, float), np.array(units, float)
 
@@ -66,14 +71,14 @@ def fit(model, rps, units, p95):
     return best[1], math.sqrt(best[0])
 
 
-def mu_per_run(run, rps, units, p95, params):
+def mu_per_run(run, rps, units, p95, params, model="shared"):
     """mu re-fitted per run with the other parameters fixed: the spread to randomise over in training."""
     out = {}
     for r in np.unique(run):
         s = run == r
         if s.sum() < 10:
             continue
-        errs = [((np.log(predict("shared", rps[s], units[s], m, params["overhead"], params["ks"], params["kq"]))
+        errs = [((np.log(predict(model, rps[s], units[s], m, params["overhead"], params["ks"], params["kq"]))
                   - np.log(p95[s])) ** 2).mean() for m in GRID["mu"]]
         out[str(r)] = float(GRID["mu"][int(np.argmin(errs))])
     return out
@@ -82,11 +87,13 @@ def mu_per_run(run, rps, units, p95, params):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("db")
+    ap.add_argument("--tier", default="vm", choices=["vm", "k8s"])
     ap.add_argument("--cpus-per-unit", type=float, default=0.05)
     ap.add_argument("--timeout-ms", type=float, default=5000.0, help="leave out steps at/above this p95")
     a = ap.parse_args(argv)
 
-    run, rps, p95, cpu, units = load(a.db)
+    run, rps, p95, cpu, units = load(a.db, a.tier)
+    units = np.maximum(units, 1.0)
     cpu_per_req = float(np.median(cpu[rps > 2] / rps[rps > 2]))
     mu_cpu = a.cpus_per_unit / cpu_per_req
     util = rps / (units * mu_cpu)
@@ -104,7 +111,8 @@ def main(argv=None):
         print(f"\n{model:8s} fit: mu={params['mu']:.2f} req/s/unit  overhead={params['overhead']:.0f} ms  "
               f"k_s={params['ks']}  k_q={params['kq']}   RMSE(log)={rmse:.3f}  median |error|={100 * mape:.0f} %")
 
-    p = fits["shared"]
+    best = "parallel" if a.tier == "k8s" else "shared"     # pods are separate servers; a VM quota is one
+    p = fits[best]
     print("\nper allocation (fitted steps): measured vs predicted median p95, ms")
     print(" units  n   measured  shared  parallel")
     for u in np.unique(units[keep]):
@@ -112,12 +120,12 @@ def main(argv=None):
         if s.sum() < 5:
             continue
         print(f"  {int(u):3d} {int(s.sum()):4d}  {np.median(p95[s]):8.0f} "
-              f"{np.median(predict('shared', rps[s], units[s], **p)):7.0f} "
+              f"{np.median(predict('shared', rps[s], units[s], **fits['shared'])):7.0f} "
               f"{np.median(predict('parallel', rps[s], units[s], **fits['parallel'])):8.0f}")
 
-    per_run = mu_per_run(run[keep], rps[keep], units[keep], p95[keep], p)
+    per_run = mu_per_run(run[keep], rps[keep], units[keep], p95[keep], p, best)
     vals = np.array(list(per_run.values()))
-    print(f"\nmu per run (shared model, other parameters fixed): min {vals.min():.2f}  median {np.median(vals):.2f}  "
+    print(f"\nmu per run ({best} model, other parameters fixed): min {vals.min():.2f}  median {np.median(vals):.2f}  "
           f"max {vals.max():.2f}  over {len(vals)} runs")
     over = ~keep
     if over.any():
