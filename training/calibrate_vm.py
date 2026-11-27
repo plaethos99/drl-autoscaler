@@ -12,6 +12,9 @@ two latency models with the same p95 formula the simulator uses,
 * "shared"    (one container whose CPU quota grows with units):          one server of rate units * mu
                                                                        -> service = 1000 / (units * mu)
 
+* "random"    (k8s only: kube-proxy sends each connection to a random pod): `units` separate M/M/1 queues,
+                                                                       each with rate mu and 1/units of the traffic
+
 k8s tier: units = *ready* pods (pods still starting serve nothing), and the run ids start with "k8s-".
 
 Each model's parameters (mu, overhead, k_s, k_q) are fitted by grid search on log(p95). Steps that are
@@ -54,16 +57,18 @@ def load(db_path: str, tier: str = "vm", steady: bool = False, window: int = 3, 
 def predict(model, rps, units, mu, overhead, ks, kq):
     """p95 (ms) for arrays rps/units and scalar or broadcastable parameters (simulator formula)."""
     if model == "shared":
-        c, rate = np.ones_like(units), units * mu
+        c, rate, lam = np.ones_like(units), units * mu, rps
+    elif model == "random":      # k8s: kube-proxy sends each connection to a random pod -> `units` M/M/1 queues
+        c, rate, lam = np.ones_like(units), mu + 0 * units, rps / units
     else:
-        c, rate = units, mu
-    rho = np.minimum(rps / (c * rate), 0.98)
+        c, rate, lam = units, mu, rps
+    rho = np.minimum(lam / (c * rate), 0.98)
     service = 1000.0 / rate
     wq = service * rho ** (np.sqrt(2.0 * (c + 1.0)) - 1.0) / (c * (1.0 - rho))
     return overhead + ks * service + kq * wq
 
 
-GRID = dict(mu=np.linspace(2.0, 8.0, 61), overhead=np.linspace(0.0, 150.0, 31),
+GRID = dict(mu=np.linspace(2.0, 12.0, 101), overhead=np.linspace(0.0, 200.0, 41),
             ks=np.array([0.5, 1.0, 1.5, 2.0, 2.3, 2.6, 3.0]), kq=np.array([0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]))
 
 
@@ -117,7 +122,8 @@ def main(argv=None):
     print(f"CPU per request: {1000 * cpu_per_req:.1f} ms  ->  capacity from CPU: {mu_cpu:.2f} req/s per unit")
 
     fits = {}
-    for model in ("parallel", "shared"):
+    models = ("parallel", "shared", "random") if a.tier == "k8s" else ("parallel", "shared")
+    for model in models:
         params, rmse = fit(model, rps[keep], units[keep], p95[keep])
         pred = predict(model, rps[keep], units[keep], **params)
         mape = float(np.median(np.abs(pred - p95[keep]) / p95[keep]))
@@ -125,17 +131,16 @@ def main(argv=None):
         print(f"\n{model:8s} fit: mu={params['mu']:.2f} req/s/unit  overhead={params['overhead']:.0f} ms  "
               f"k_s={params['ks']}  k_q={params['kq']}   RMSE(log)={rmse:.3f}  median |error|={100 * mape:.0f} %")
 
-    best = "parallel" if a.tier == "k8s" else "shared"     # pods are separate servers; a VM quota is one
+    best = "random" if a.tier == "k8s" else "shared"   # pods: separate queues, random routing; a VM quota: one
     p = fits[best]
     print("\nper allocation (fitted steps): measured vs predicted median p95, ms")
-    print(" units  n   measured  shared  parallel")
+    print(" units  n   measured  " + "  ".join(f"{m:>8s}" for m in models))
     for u in np.unique(units[keep]):
         s = keep & (units == u)
         if s.sum() < 5:
             continue
-        print(f"  {int(u):3d} {int(s.sum()):4d}  {np.median(p95[s]):8.0f} "
-              f"{np.median(predict('shared', rps[s], units[s], **fits['shared'])):7.0f} "
-              f"{np.median(predict('parallel', rps[s], units[s], **fits['parallel'])):8.0f}")
+        print(f"  {int(u):3d} {int(s.sum()):4d}  {np.median(p95[s]):8.0f}  " + "  ".join(
+            f"{np.median(predict(m, rps[s], units[s], **fits[m])):8.0f}" for m in models))
 
     per_run = mu_per_run(run[keep], rps[keep], units[keep], p95[keep], p, best)
     vals = np.array(list(per_run.values()))
