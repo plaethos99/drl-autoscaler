@@ -1,5 +1,5 @@
 """Summarise the AWS runs in summary.csv: mean ± SD per scenario and method, Welch t-test and exact
-Mann-Whitney U test (two-sided) of RL against each baseline. Pure Python, no scipy needed.
+Mann-Whitney U test (two-sided) of RL against each baseline present (hpa, threshold, static). Pure Python.
 
     python docs/aws-results-v0.2/analyze.py docs/aws-results-v0.2/summary.csv
 """
@@ -11,6 +11,7 @@ import math
 import statistics as st
 import sys
 
+ORDER = ["rl", "hpa", "threshold", "static"]
 METRICS = ["sla_violation_pct", "mean_p95_ms", "max_p95_ms", "avg_units", "cost", "scaling_actions"]
 
 
@@ -84,11 +85,13 @@ def main(path):
         scen = r["run_id"].split("-")[2]
         groups.setdefault((scen, r["policy"]), []).append(r)
     scens = sorted({s for s, _ in groups})
+    methods = [p for p in ORDER if any(k[1] == p for k in groups)]
+    bases = [p for p in methods if p != "rl"]
     for s in scens:
         print(f"\n### {s}\n")
         print("| Method | n | " + " | ".join(METRICS) + " |")
         print("|---" * (len(METRICS) + 2) + "|")
-        for p in ("rl", "threshold", "static"):
+        for p in methods:
             g = groups.get((s, p), [])
             if not g:
                 continue
@@ -97,11 +100,12 @@ def main(path):
                 v = [float(r[m]) for r in g]
                 cells.append(f"{st.mean(v):.2f} ± {st.stdev(v):.2f}" if len(v) > 1 else f"{v[0]:.2f}")
             print(f"| {p} | {len(g)} | " + " | ".join(cells) + " |")
-        print("\n| Metric | RL vs threshold: Welch / MWU | RL vs static: Welch / MWU |\n|---|---|---|")
+        print("\n| Metric | " + " | ".join(f"RL vs {b}: Welch / MWU" for b in bases) + " |")
+        print("|---" * (len(bases) + 1) + "|")
         for m in METRICS[:5]:
             out = []
             rl = [float(r[m]) for r in groups.get((s, "rl"), [])]
-            for b in ("threshold", "static"):
+            for b in bases:
                 ob = [float(r[m]) for r in groups.get((s, b), [])]
                 if len(rl) > 1 and len(ob) > 1:
                     d = (st.mean(rl) - st.mean(ob)) / st.mean(ob) * 100 if st.mean(ob) else float("nan")
