@@ -28,14 +28,26 @@ import sqlite3
 import numpy as np
 
 
-def load(db_path: str, tier: str = "vm"):
+def load(db_path: str, tier: str = "vm", steady: bool = False, window: int = 3, backlog_ms: float = 1500.0):
+    """Steps with traffic. steady=True keeps only steps whose ready allocation was the same for the previous
+    `window` steps (the 15 s p95/rps window saw one allocation) and none of which had p95 above backlog_ms
+    (no backlog left over from an earlier overload, which a stationary queue model can't explain)."""
     db = sqlite3.connect(db_path)
     cols = {r[1] for r in db.execute("PRAGMA table_info(decisions)")}
     ready = "units_before - COALESCE(pending, 0)" if "pending" in cols else "units_before"
     rows = db.execute(
-        f"SELECT run_id, rps, p95_ms, cpu_cores, {ready} FROM decisions "
-        f"WHERE p95_ms IS NOT NULL AND rps > 0.5 AND run_id LIKE '{tier}-%' AND shadow = 0").fetchall()
-    run, rps, p95, cpu, units = zip(*rows)
+        f"SELECT run_id, step, rps, p95_ms, cpu_cores, {ready} FROM decisions "
+        f"WHERE run_id LIKE '{tier}-%' AND shadow = 0 ORDER BY run_id, step").fetchall()
+    keep = []
+    for i, (r, _, rps, p95, _, u) in enumerate(rows):
+        if p95 is None or rps is None or rps <= 0.5:
+            continue
+        if steady:
+            prev = rows[max(0, i - window):i]
+            if len(prev) < window or any(p[0] != r or p[5] != u or (p[3] or 0) > backlog_ms for p in prev):
+                continue
+        keep.append(rows[i])
+    run, _, rps, p95, cpu, units = zip(*keep)
     return np.array(run), np.array(rps, float), np.array(p95, float), np.array(cpu, float), np.array(units, float)
 
 
@@ -88,11 +100,13 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("db")
     ap.add_argument("--tier", default="vm", choices=["vm", "k8s"])
+    ap.add_argument("--steady", action="store_true",
+                    help="only steps with an unchanged allocation and no leftover backlog over the past 15 s")
     ap.add_argument("--cpus-per-unit", type=float, default=0.05)
     ap.add_argument("--timeout-ms", type=float, default=5000.0, help="leave out steps at/above this p95")
     a = ap.parse_args(argv)
 
-    run, rps, p95, cpu, units = load(a.db, a.tier)
+    run, rps, p95, cpu, units = load(a.db, a.tier, a.steady)
     units = np.maximum(units, 1.0)
     cpu_per_req = float(np.median(cpu[rps > 2] / rps[rps > 2]))
     mu_cpu = a.cpus_per_unit / cpu_per_req
