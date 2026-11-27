@@ -1,5 +1,5 @@
 """Summarise the AWS runs in summary.csv: mean ± SD per scenario and method, Welch t-test and exact
-Mann-Whitney U test (two-sided) of RL against each baseline present (hpa, threshold, static). Pure Python.
+Mann-Whitney U test (two-sided) of RL against each baseline present (hpa, hpa40, threshold, static, static6). Pure Python.
 
     python docs/aws-results-v0.2/analyze.py docs/aws-results-v0.2/summary.csv
 """
@@ -11,7 +11,7 @@ import math
 import statistics as st
 import sys
 
-ORDER = ["rl", "hpa", "threshold", "static"]
+ORDER = ["rl", "hpa", "hpa40", "threshold", "static", "static6"]
 METRICS = ["sla_violation_pct", "mean_p95_ms", "max_p95_ms", "avg_units", "cost", "scaling_actions"]
 
 
@@ -82,8 +82,8 @@ def main(path):
     rows = [r for r in csv.DictReader(open(path)) if r["shadow"] == "0" and "calibrate" not in r["run_id"]]
     groups: dict[tuple[str, str], list[dict]] = {}
     for r in rows:
-        scen = r["run_id"].split("-")[2]
-        groups.setdefault((scen, r["policy"]), []).append(r)
+        _, pol, scen = r["run_id"].split("-")[:3]   # run_test.sh variant (static6, hpa40), not the controller's name
+        groups.setdefault((scen, pol), []).append(r)
     scens = sorted({s for s, _ in groups})
     methods = [p for p in ORDER if any(k[1] == p for k in groups)]
     bases = [p for p in methods if p != "rl"]

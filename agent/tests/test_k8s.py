@@ -177,6 +177,9 @@ def test_testbed_manifests_match_the_controller():
     assert svc["spec"]["ports"][0]["port"] == 8080
     (hpa,) = _docs("hpa.yaml")
     assert hpa["spec"]["minReplicas"] == k8s["min_units"] and hpa["spec"]["maxReplicas"] == k8s["max_units"]
+    # run_test.sh's hpa<pct> variants rewrite this exact line with sed
+    assert hpa["spec"]["metrics"][0]["resource"]["target"]["averageUtilization"] == 70
+    assert "averageUtilization: 70" in (TESTBED / "hpa.yaml").read_text(encoding="utf-8")
     prom = next(d for d in _docs("prometheus.yaml") if d["kind"] == "Service")
     assert prom["spec"]["ports"][0]["nodePort"] == 30090
 

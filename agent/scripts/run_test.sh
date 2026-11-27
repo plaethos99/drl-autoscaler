@@ -8,8 +8,10 @@
 #   ./run_test.sh rl        [scenario] # model controls the classifier
 #   ./run_test.sh rl-shadow [scenario] # model only logs; the allocation stays fixed
 #   ./run_test.sh threshold [scenario] # HPA-like baseline (our rule, same 5 s loop as the agent)
-#   ./run_test.sh hpa       [scenario] # k8s only: the cluster's own HorizontalPodAutoscaler
+#   ./run_test.sh hpa       [scenario] # k8s only: the cluster's own HorizontalPodAutoscaler (70 % CPU target)
+#   ./run_test.sh hpa40     [scenario] # same, other CPU target (hpa<percent>)
 #   ./run_test.sh static    [scenario] # fixed 4 units, the simulator's static baseline
+#   ./run_test.sh static6   [scenario] # fixed 6 units (static<units>), e.g. an equal-cost baseline
 #
 # scenario: paper5min (default) | steady | periodic | ramp | spike | double_spike | sawtooth | azure_*
 # Env: MU_PER_UNIT (default 9.5), PEAK_USERS (default from MU), DURATION_S (300), START_UNITS (2),
@@ -19,7 +21,7 @@ set -euo pipefail
 
 DIR=/opt/drl-autoscaler
 VENV=/opt/venv
-POLICY="${1:?usage: run_test.sh calibrate|rl|rl-shadow|threshold|hpa|static [scenario]}"
+POLICY="${1:?usage: run_test.sh calibrate|rl|rl-shadow|threshold|hpa[pct]|static[units] [scenario]}"
 SCENARIO="${2:-paper5min}"
 TIER="${TIER:-vm}"
 MU="${MU_PER_UNIT:-9.5}"
@@ -61,9 +63,14 @@ case "$POLICY" in
   rl)         ARGS=(--policy rl);            START="$START_UNITS" ;;
   rl-shadow)  ARGS=(--policy rl --shadow);   START="$START_UNITS" ;;
   threshold)  ARGS=(--policy threshold);     START="$START_UNITS" ;;
-  hpa)        [ "$TIER" = k8s ] || { echo "hpa needs TIER=k8s"; exit 1; }
+  hpa|hpa[0-9]*)
+              [ "$TIER" = k8s ] || { echo "hpa needs TIER=k8s"; exit 1; }
+              HPA_TARGET="${POLICY#hpa}"; HPA_TARGET="${HPA_TARGET:-70}"
               ARGS=(--policy hpa);           START="$START_UNITS" ;;
-  static)     ARGS=(--policy static);        START=4 ;;
+  static|static[0-9]*)
+              N="${POLICY#static}"; N="${N:-4}"
+              [ "$N" -ge 1 ] && [ "$N" -le "$MAX_UNITS" ] || { echo "static units must be 1..$MAX_UNITS"; exit 1; }
+              ARGS=(--policy static --static-units "$N"); START="$N" ;;
   *) echo "unknown policy $POLICY"; exit 1 ;;
 esac
 PEAK="${PEAK_USERS:-$PEAK_DEFAULT}"
@@ -81,8 +88,9 @@ fi
 
 echo "== $RUN_ID: start units $START x $CPU_UNIT vCPU, peak users $PEAK, MU_PER_UNIT $MU"
 set_units "$START"
-if [ "$POLICY" = hpa ]; then
-  kubectl apply -f "$HPA_YAML" >/dev/null
+if [ -n "${HPA_TARGET:-}" ]; then
+  sed "s/averageUtilization: 70/averageUtilization: $HPA_TARGET/" "$HPA_YAML" | kubectl apply -f - >/dev/null
+  echo "   HPA target $(kubectl -n "$NS" get hpa classifier -o jsonpath='{.spec.metrics[0].resource.target.averageUtilization}') % CPU"
   trap 'kubectl -n "$NS" delete hpa classifier --ignore-not-found >/dev/null' EXIT
 fi
 echo "   30 s idle so the previous run's traffic leaves the Prometheus windows..."
