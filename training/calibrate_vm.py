@@ -69,7 +69,8 @@ def predict(model, rps, units, mu, overhead, ks, kq):
 
 
 GRID = dict(mu=np.linspace(2.0, 12.0, 101), overhead=np.linspace(0.0, 200.0, 41),
-            ks=np.array([0.5, 1.0, 1.5, 2.0, 2.3, 2.6, 3.0]), kq=np.array([0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]))
+            ks=np.array([0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 2.3, 2.6, 3.0]),
+            kq=np.array([0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0]))
 
 
 def fit(model, rps, units, p95):
