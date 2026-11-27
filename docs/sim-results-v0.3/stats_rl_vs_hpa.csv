@@ -1,0 +1,11 @@
+mode,pattern,rl,rl_mean,hpa_mean,U,p_value
+k8s,steady,DDPG,0.0,50.1667,0.0,0.0
+k8s,periodic,DDPG,7.6333,53.5,0.0,0.0
+k8s,ramp,DDPG,0.3333,55.5,0.0,0.0
+k8s,spike,DDPG,6.7667,37.0,0.0,0.0
+k8s,paper5min,DDPG,7.3667,53.5,0.0,0.0
+k8s,azure_trace,DDPG,4.4333,35.0,0.0,0.0
+k8s,double_spike,DDPG,11.2333,33.6667,0.0,0.0
+k8s,sawtooth,DDPG,3.8,54.3333,0.0,0.0
+k8s,noisy_trace,DDPG,2.1667,43.1667,0.0,0.0
+k8s,azure_trace_test,DDPG,5.4667,34.1667,38.0,0.0

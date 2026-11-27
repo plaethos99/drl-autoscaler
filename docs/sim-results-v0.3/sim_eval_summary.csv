@@ -1,0 +1,6 @@
+mode,method,reward,sla_violation_pct,mean_p95_ms,avg_units,cost,drop_pct,scaling_actions
+k8s,DDPG,-23.88,4.92,276.03,4.8,306.16,0.0,10.57
+k8s,DQN,-30.61,11.44,514.17,3.81,267.47,0.32,25.28
+k8s,HPA,-70.91,45.0,1492.47,2.41,155.5,4.74,6.48
+k8s,PPO,-24.01,3.59,262.76,5.23,327.64,0.03,8.55
+k8s,RoundRobin-Static,-29.2,16.05,332.68,3.96,240.0,0.0,0.8

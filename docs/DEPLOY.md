@@ -1,4 +1,4 @@
-# Deploying the VM-tier testbed on AWS
+# Deploying the VM-tier and Kubernetes-tier testbeds on AWS
 
 This guide rebuilds the setup used for the AWS results in
 [`aws-results-v0.2`](aws-results-v0.2/README.md) and [`aws-results-2026-11-26`](aws-results-2026-11-26/README.md): the image service with the RL controller and
@@ -6,7 +6,8 @@ the demo dashboard on one EC2 instance, and the load generator on a second one. 
 the AWS web console. Nothing is installed by hand; each instance sets itself up on first boot from a script
 in this repository.
 
-Time: about 20 minutes to deploy, then about 1 hour for the full set of measured runs.
+Time: about 20 minutes to deploy, then about 1 hour for the full set of measured runs. The Kubernetes tier adds a
+third instance; see [Kubernetes tier](#kubernetes-tier-a-third-instance-with-k3s).
 
 ## What gets built
 
@@ -239,6 +240,47 @@ sudo docker stats --no-stream --format '{{.Name}} {{.CPUPerc}}'    # 100 % = one
 On an instance with 8 or more vCPU, `ec2-setup.sh` uses the simulator's 0.5-vCPU units instead. Repeat this
 check before measuring there.
 
+## Kubernetes tier: a third instance with k3s
+
+The Kubernetes results ([`aws-results-k8s-v0.3`](aws-results-k8s-v0.3/README.md)) use a separate box so the two
+tiers never share CPU. It reuses the same load generator: every run sends its own gateway address to Locust.
+
+1. **Launch** `drl-k8s-test` exactly as in step 1 (Ubuntu 24.04, **m7i-flex.large**, no key pair, 20 GiB gp3),
+   but choose **Select existing security group → `launch-wizard-1`** (the group of the other two boxes, so the
+   *All TCP from this security group* rule covers 8080 and 8089) and use this user data, with the load generator's
+   private IP:
+
+   ```
+   #!/bin/bash
+   curl -fsSL https://raw.githubusercontent.com/plaethos99/drl-autoscaler/main/agent/scripts/k8s-setup.sh | LOADGEN_HOST=<drl-loadgen private ip> bash
+   ```
+
+   [`k8s-setup.sh`](../agent/scripts/k8s-setup.sh) installs k3s (Traefik off, HPA every 5 s), applies
+   [`apps/image-service/k8s/testbed`](../apps/image-service/k8s/testbed) (the app with the classifier as 1–8 pods of
+   0.1 vCPU, Prometheus on NodePort 30090) and the controller. About 10–15 minutes; it ends with
+   `k8s setup finished: 6 pods in imgsvc` in `/var/log/drl-setup.log`.
+2. **Update the load generator** once (its Locust must accept the target per run):
+   `sudo git -C /opt/drl-autoscaler pull && sudo systemctl restart drl-locust` on drl-loadgen.
+3. **Calibrate** on drl-k8s-test (5 minutes; also times pod start-up):
+
+   ```
+   cd /opt/drl-autoscaler/agent/scripts && CAL_PEAK_USERS=55 ./run_test.sh calibrate
+   ```
+
+   It printed `MU_PER_UNIT=3.90` and `POD_STARTUP_S=11.7` on 2026-11-27.
+4. **Measured runs** (RL, the cluster's own HPA, static; about 3 hours, in tmux):
+
+   ```
+   curl -fsSL https://raw.githubusercontent.com/plaethos99/drl-autoscaler/main/agent/scripts/run_all.sh | MU_PER_UNIT=3.9 REPEATS=5 SHADOW=0 SCENARIOS='paper5min azure_typical' bash
+   ```
+
+   The box's `/etc/profile.d` sets `TIER=k8s`, so the policies default to `rl hpa static`; `hpa` runs apply
+   [`hpa.yaml`](../apps/image-service/k8s/testbed/hpa.yaml) for the run and delete it afterwards. RL uses
+   `model-v0.3` (the controller's default for this tier).
+
+If an earlier `run_all.sh` left its tmux session open, it prints `duplicate session: drl` and starts nothing:
+`tmux kill-session -t drl` first (only when no run is in progress).
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
@@ -259,9 +301,11 @@ check before measuring there.
 |---|---|
 | [`agent/scripts/ec2-setup.sh`](../agent/scripts/ec2-setup.sh) | User data for the app instance |
 | [`agent/scripts/loadgen-setup.sh`](../agent/scripts/loadgen-setup.sh) | User data for the load generator |
+| [`agent/scripts/k8s-setup.sh`](../agent/scripts/k8s-setup.sh) | User data for the Kubernetes instance (k3s, testbed manifests, controller) |
+| [`apps/image-service/k8s/testbed/`](../apps/image-service/k8s/testbed) | The k8s testbed: app, Prometheus, the HPA baseline |
 | [`agent/scripts/install-dashboard.sh`](../agent/scripts/install-dashboard.sh) | Dashboard service and the load generator's address |
 | [`agent/scripts/run_all.sh`](../agent/scripts/run_all.sh) | Calibration plus all measured runs, unattended |
-| [`agent/scripts/run_test.sh`](../agent/scripts/run_test.sh) | One 5-minute run (`calibrate`, `rl`, `rl-shadow`, `threshold`, `static`) |
+| [`agent/scripts/run_test.sh`](../agent/scripts/run_test.sh) | One 5-minute run (`calibrate`, `rl`, `rl-shadow`, `threshold`, `hpa` (k8s), `static`) |
 | [`agent/autoscaler/`](../agent/autoscaler) | The controller (state, policies, guards, Docker adapter, decision log, report) |
 | [`agent/dashboard/`](../agent/dashboard) | The demo dashboard and the remote load driver |
 | [`loadgen/`](../loadgen) | Locust file and the shared traffic shapes |
