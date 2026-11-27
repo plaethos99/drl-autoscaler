@@ -67,7 +67,9 @@ static 20.8 %); `azure_trace_test` 5.0 % at 4.85 pods (HPA 34.2 % at 1.92, stati
   (about 2.4 pods on average). The RL policy keeps about twice as many pods, scales up ahead of the load and cuts
   SLA violations by about 90 %, on every pattern including held-out real traffic.
 * Against static allocation, RL uses about 20 % more pods for about 70 % fewer violations.
-* The AWS runs are the real test: [`../aws-results-k8s-v0.3`](../aws-results-k8s-v0.3/README.md).
+* The AWS runs are the real test: [`../aws-results-k8s-v0.3`](../aws-results-k8s-v0.3/README.md). There RL also
+  beats the cluster HPA clearly, but a fixed 6 pods (RL's average) beats RL at the same cost: on the real cluster,
+  frequent scaling costs more than this simulator charges for it.
 
 ## Files
 
