@@ -107,7 +107,7 @@ def test_k8s_latency_matches_aws_calibration():
     assert run(8, 4 * 3.9)[0] < run(4, 4 * 3.9)[0]          # more pods -> less queueing
     assert env.cpu_mu == pytest.approx(3.9 * 1.86)
     _, infos = run(4, 4 * 7.25 * 1.3, steps=12)              # 30 % above CPU capacity: backlog builds up
-    assert infos[-1]["p95"] > infos[1]["p95"] and infos[-1]["p95"] > 1000
+    assert infos[-1]["p95"] > 1000 and env.queue > 100       # (p95 soon reaches the 10 s client timeout)
     assert env.last["cpu_demand"] <= 1.0                     # request = limit: HPA never sees > 100 %
 
 
