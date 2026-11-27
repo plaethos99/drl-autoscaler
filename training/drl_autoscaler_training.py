@@ -15,8 +15,9 @@
 # when present (`DEVICE=auto`), PPO always runs on CPU. Training runs in parallel, one process per CPU core.
 #
 # Calibration status: the `vm` profile is fitted to real AWS runs (2026-11-26, m7i-flex.large, see
-# training/calibrate_vm.py and docs/aws-results-2026-11-26). The `k8s` and `function` numbers (req/s per
-# replica, startup time, cold start, ...) are still placeholders until they are measured the same way.
+# training/calibrate_vm.py and docs/aws-results-2026-11-26); the `k8s` profile to a single-node k3s cluster on
+# the same instance type (2026-11-27, `calibrate_vm.py --tier k8s --steady`). The `function` numbers
+# (cold start, ...) are still placeholders until they are measured the same way.
 
 # %%
 import importlib, subprocess, sys
@@ -39,7 +40,9 @@ from gymnasium import spaces
 
 # ----------------------------- CONFIG ---------------------------------------------------------
 QUICK = os.environ.get("QUICK") == "1"   # set True for a tiny smoke run (few minutes)
-MODES = ["k8s", "vm", "function"]   # train one model per tier
+# One model per tier. model-v0.3 retrains only the k8s tier (calibrated on AWS k3s); the vm and function
+# models stay at model-v0.2. MODES=k8s,vm,function trains all three.
+MODES = os.environ.get("MODES", "k8s").split(",")
 ALGOS = ["PPO", "DQN", "DDPG"]      # comparative study (Objective 1)
 SEEDS = [0, 1, 2, 3, 4]             # 5 seeds (v0.2 paper run)
 TIMESTEPS = 150_000                 # per (mode, algo, seed)
@@ -73,9 +76,16 @@ CLIENT_TIMEOUT_MS = 10_000.0   # requests slower than this time out (caps the la
 ACTION_DELTAS = np.array([-2, -1, 0, 1, 2])   # discrete action -> change in allocation units
 
 PROFILES = {
-    # unit = 1 pod replica
-    "k8s": dict(min_units=1, max_units=10, mu=(15.0, 22.0), overhead_ms=(20.0, 40.0),
-                startup_steps=(1, 4), unit_cost=1.0, cold_ms=(0.0, 0.0), max_queue_s=10.0),
+    # unit = 1 classifier pod with a fixed 0.1 vCPU (request = limit), 1..8 pods. Calibrated on AWS k3s
+    # (2026-11-27, training/calibrate_vm.py --tier k8s --steady, 262 steady steps of 8 runs): 3.9 req/s per pod
+    # within the SLA (= MU_PER_UNIT), CPU for ~7.2 req/s per pod (13.8 ms CPU per request), and each pod is
+    # its own queue because kube-proxy routes connections at random ("random": service rate 2.56 x mu,
+    # overhead ~60 ms, p95 = overhead + 0.5 x service + 6 x queueing delay; median error 36 %). New pods are
+    # ready after ~12 s (2-4 steps). The cluster HPA sees CPU capped at 100 % and averaged over 15 s.
+    "k8s": dict(min_units=1, max_units=8, mu=(3.6, 4.2), overhead_ms=(45.0, 75.0),
+                startup_steps=(2, 4), unit_cost=1.0, cold_ms=(0.0, 0.0), max_queue_s=10.0,
+                latency="random", lat_mu_ratio=2.56, cpu_mu_ratio=1.86, k_service=0.5, k_queue=6.0,
+                hpa_util_cap=1.0, hpa_metric_steps=3),
     # unit = a slice of one container's cgroup CPU quota (AWS testbed: 0.05 vCPU, 1..8 units); changes apply
     # instantly. Calibrated on AWS (training/calibrate_vm.py, 584 steps, 10 runs): ONE server whose speed
     # grows with the quota ("shared"), mu 3.7-4.1 req/s per unit across runs (3.5 from CPU time per
@@ -232,6 +242,16 @@ class CloudScalingEnv(gym.Env):
         return int(ACTION_DELTAS[int(action)])
 
     @property
+    def lat_mu(self):
+        """Service rate per unit in the latency formula (k8s: differs from the SLA capacity mu)."""
+        return self.mu * self.p.get("lat_mu_ratio", 1.0)
+
+    @property
+    def cpu_mu(self):
+        """Requests/s one unit's CPU can process at 100 % (throughput limit, CPU %, what HPA sees)."""
+        return self.mu * self.p.get("cpu_mu_ratio", 1.0)
+
+    @property
     def total_target(self):
         return self.units + len(self.pending)
 
@@ -239,7 +259,7 @@ class CloudScalingEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         rng, p = self.np_random, self.p
-        self.mu = self._sample(rng, p["mu"])
+        self.mu = self._sample(rng, p["mu"])             # req/s per unit within the SLA (= MU_PER_UNIT)
         self.overhead = self._sample(rng, p["overhead_ms"])
         lo, hi = p["startup_steps"]
         self.startup = int(rng.integers(lo, hi + 1)) if self.randomize else lo
@@ -257,6 +277,7 @@ class CloudScalingEnv(gym.Env):
         self.ondemand = 0.0         # function mode: warm on-demand instances
         self.ondemand_age = 0
         self.last = dict(cpu=0.3, mem=0.3, p95=self.overhead, cold_frac=0.0, cpu_demand=0.3)
+        self.cpu_hist = []          # cpu_demand per step (the HPA baseline may see it averaged and late)
         # What the agent sees is what the real controller sees: request rate and p95 of the *past*
         # OBS_WINDOW_STEPS steps (Prometheus window), never the rate of the step about to happen.
         self.win = [(float(self.rps[0]), float(self.overhead), 1.0)] * OBS_WINDOW_STEPS
@@ -315,7 +336,7 @@ class CloudScalingEnv(gym.Env):
             lat_units = float(p["concurrency_limit"])            # functions scale out on demand: queueing
                                                                  # only near the concurrency limit
         else:
-            cap = self.units * self.mu * DT
+            cap = self.units * self.cpu_mu * DT          # throughput is bounded by CPU, not by the SLA
             served = min(demand, cap)
             eff_units = lat_units = max(self.units, 1e-6)
 
@@ -328,22 +349,28 @@ class CloudScalingEnv(gym.Env):
         # p95 ≈ overhead + k_s × service time + k_q × mean queueing delay + backlog drain time
         # "parallel" (k8s pods, function instances): c = units servers of rate mu each.
         # "shared" (vm: one container whose CPU quota grows): one server of rate units × mu.
+        # "random" (k8s, calibrated on AWS k3s): kube-proxy sends each connection to a random pod, so every
+        #          pod is its own queue (c = 1) with 1/units of the traffic.
+        lam = arrivals / DT
         if p.get("latency") == "shared":
-            c, rate = 1.0, max(lat_units, 1e-6) * self.mu
+            c, rate = 1.0, max(lat_units, 1e-6) * self.lat_mu
+        elif p.get("latency") == "random":
+            c, rate, lam = 1.0, self.lat_mu, lam / max(lat_units, 1.0)
         else:
-            c, rate = max(lat_units, 1.0), self.mu
-        rho = min((arrivals / DT) / (c * rate), 0.98)
+            c, rate = max(lat_units, 1.0), self.lat_mu
+        rho = min(lam / (c * rate), 0.98)
         service_ms = 1000.0 / rate
         wq_ms = service_ms * rho ** (math.sqrt(2.0 * (c + 1.0)) - 1.0) / (c * (1.0 - rho))
         p95 = self.overhead + p.get("k_service", 2.3) * service_ms + p.get("k_queue", 3.0) * wq_ms
-        p95 += 1000.0 * self.queue / max(lat_units * self.mu, 1e-6)          # backlog wait
+        p95 += 1000.0 * self.queue / max(lat_units * self.cpu_mu, 1e-6)      # backlog wait
         if cold_frac >= 0.05:
             p95 = max(p95, self.cold_ms + service_ms + self.overhead)
         p95 = min(p95, CLIENT_TIMEOUT_MS)
-        cpu = float(min(1.0, served / max(eff_units * self.mu * DT, 1e-6)))
-        # utilisation vs CPU *request* (pods may burst to 3x request) — what HPA actually sees
+        cpu = float(min(1.0, served / max(eff_units * self.cpu_mu * DT, 1e-6)))
+        # utilisation vs CPU *request* — what HPA actually sees. Pods may burst above their request (up to 3x by
+        # default); with request = limit (k8s testbed) it saturates at 100 % ("hpa_util_cap": 1.0).
         # (function mode: = provisioned-concurrency utilisation, the metric AWS target tracking uses)
-        cpu_demand = float(min(3.0, (arrivals / DT) / (max(self.units, 1) * self.mu)))
+        cpu_demand = float(min(p.get("hpa_util_cap", 3.0), (arrivals / DT) / (max(self.units, 1) * self.cpu_mu)))
         mem = float(min(1.0, 0.25 + 0.6 * cpu + 0.1 * min(self.queue / max(rps * DT, 1.0), 1.0)))
 
         # ---- reward ----
@@ -355,6 +382,7 @@ class CloudScalingEnv(gym.Env):
         reward = -(W_SLA * violation + W_COST * cost_norm + W_DROP * drop_frac + W_ACT * abs(delta))
 
         self.last = dict(cpu=cpu, mem=mem, p95=p95, cold_frac=cold_frac, cpu_demand=cpu_demand)
+        self.cpu_hist.append(cpu_demand)
         info = dict(t=self.t, rps=rps, units=self.units, pending=len(self.pending), p95=p95,
                     violated=violated, cost=cost, dropped=dropped, arrivals=arrivals,
                     cpu=cpu, delta=delta, pattern=self.pattern)
@@ -399,9 +427,17 @@ class HPABaseline:
     def __init__(self, target=0.70, window=6):
         self.target, self.window = target, window
     def reset(self):
-        self.history = []
+        self.history, self.seen, self.age = [], None, 0
     def act(self, env):
-        cpu = env.last["cpu_demand"]          # utilisation relative to CPU request (can exceed 100 %)
+        # Utilisation relative to the CPU request. "hpa_metric_steps" > 1 (k8s): metrics-server reports CPU
+        # averaged over its resolution (15 s = 3 steps) and refreshes only that often, so HPA acts on a value
+        # that is up to two windows old.
+        k = env.p.get("hpa_metric_steps", 1)
+        if k <= 1 or self.seen is None or self.age >= k:
+            self.seen = float(np.mean(env.cpu_hist[-k:])) if env.cpu_hist else env.last["cpu_demand"]
+            self.age = 0
+        self.age += 1
+        cpu = self.seen
         cur = max(env.units, 1)
         desired = cur if abs(cpu / self.target - 1.0) <= 0.10 else math.ceil(cur * cpu / self.target)
         desired = max(desired, env.total_target if cpu > self.target else 0)  # don't cancel pods starting
@@ -593,7 +629,7 @@ for mode in MODES:
     print(f"{mode}: best = {algo} (seed {seed})  algo ranking: {by_algo.round(2).to_dict()}")
 
 metadata = dict(
-    version="v0.2-vm-calibrated-aws-azure-trace",
+    version="v0.3-k8s-calibrated-aws-k3s",
     obs_window_steps=OBS_WINDOW_STEPS,
     train_patterns=TRAIN_PATTERNS, heldout_patterns=HELDOUT_PATTERNS,
     trace_dataset=dict(name="Azure Functions Invocation Trace 2021", license="CC-BY 4.0", url=TRACE_URL,

@@ -84,3 +84,39 @@ def test_vm_latency_matches_aws_calibration():
     assert 50 < p95_at(8, 4.5) < 160
     assert 250 < p95_at(8, 25.0) < 800        # near 80 % utilisation, so Poisson noise matters
     assert p95_at(8, 4.5) < p95_at(4, 4.5)     # more CPU makes each request faster
+
+
+def test_k8s_latency_matches_aws_calibration():
+    """AWS k3s testbed (2026-11-27): 3.9 req/s per 0.1-vCPU pod within the 500 ms SLA (MU_PER_UNIT), about
+    120-150 ms at light load, CPU for ~7.2 req/s per pod; beyond that the backlog grows."""
+    p = PROFILES["k8s"]
+    assert p["max_units"] == 8 and p["latency"] == "random"
+    env = Env(mode="k8s", randomize=False, fixed_pattern="steady")
+    env.reset(seed=0)
+    env.mu, env.overhead = 3.9, 60.0          # calibrated centre values
+
+    def run(units, rps, steps=8):
+        env.units, env.queue, env.pending = units, 0.0, []
+        env.rps[:] = rps
+        env.t = 0
+        infos = [env.step_target(units)[4] for _ in range(steps)]
+        return float(np.median([i["p95"] for i in infos])), infos
+
+    assert 100 < run(4, 2.0)[0] < 220                       # light load
+    assert 330 < run(4, 4 * 3.9)[0] < 750                   # at MU_PER_UNIT per pod: around the SLA
+    assert run(8, 4 * 3.9)[0] < run(4, 4 * 3.9)[0]          # more pods -> less queueing
+    assert env.cpu_mu == pytest.approx(3.9 * 1.86)
+    _, infos = run(4, 4 * 7.25 * 1.3, steps=12)              # 30 % above CPU capacity: backlog builds up
+    assert infos[-1]["p95"] > infos[1]["p95"] and infos[-1]["p95"] > 1000
+    assert env.last["cpu_demand"] <= 1.0                     # request = limit: HPA never sees > 100 %
+
+
+def test_k8s_new_pods_start_after_a_delay():
+    env = Env(mode="k8s", randomize=False, fixed_pattern="steady")
+    env.reset(seed=0)
+    env.units, env.pending = 2, []
+    _, _, _, _, info = env.step_target(4)
+    assert info["units"] == 2 and info["pending"] == 2       # startup_steps lower bound is 2 steps (10 s)
+    env.step_target(4)
+    _, _, _, _, info = env.step_target(4)
+    assert info["units"] == 4 and info["pending"] == 0

@@ -23,6 +23,10 @@ TIERS = {
 }
 
 
+# Released model per tier (GitHub Release tag). MODEL_RELEASE overrides it for every tier.
+DEFAULT_RELEASE = {"vm": "model-v0.2", "k8s": "model-v0.3"}
+
+
 def _env(name: str, default: str) -> str:
     return os.getenv(name, default)
 
@@ -36,7 +40,7 @@ class Settings:
     run_id: str = ""
 
     # model (GitHub Release asset + metadata.json)
-    model_release: str = field(default_factory=lambda: _env("MODEL_RELEASE", "model-v0.2"))
+    model_release: str = field(default_factory=lambda: _env("MODEL_RELEASE", ""))   # "" = DEFAULT_RELEASE[tier]
     model_repo: str = field(default_factory=lambda: _env("MODEL_REPO", "plaethos99/drl-autoscaler"))
     model_dir: str = field(default_factory=lambda: _env("MODEL_DIR", os.path.expanduser("~/.cache/drl-autoscaler")))
 
@@ -67,3 +71,7 @@ class Settings:
     @property
     def profile(self) -> dict:
         return TIERS[self.tier]
+
+    @property
+    def release(self) -> str:
+        return self.model_release or DEFAULT_RELEASE[self.tier]

@@ -32,7 +32,7 @@ def make_policy(s: Settings):
     p = s.profile
     if s.policy == "rl":
         from .modelstore import TrainedModel
-        model = TrainedModel(s.tier, s.model_repo, s.model_release, s.model_dir)
+        model = TrainedModel(s.tier, s.model_repo, s.release, s.model_dir)
         meta = model.metadata
         if meta.get("decision_interval_s", DT_S) != DT_S or meta.get("sla_p95_ms", SLA_P95_MS) != SLA_P95_MS:
             raise ValueError("model was trained with a different decision interval or SLA")
@@ -40,8 +40,8 @@ def make_policy(s: Settings):
         if trained and trained.get("max_units") != p["max_units"]:
             raise ValueError(f"model trained with max_units={trained.get('max_units')}, tier has {p['max_units']}")
         state = StateBuilder(p["max_units"], p["cpus_per_unit"], s.mu_per_unit, meta.get("observation"))
-        log.info("model %s: %s seed %s (%s)", s.model_release, model.algo, model.seed, model.version)
-        return RLPolicy(model, state), f"{s.model_release}:{s.tier}_best({model.algo})"
+        log.info("model %s: %s seed %s (%s)", s.release, model.algo, model.seed, model.version)
+        return RLPolicy(model, state), f"{s.release}:{s.tier}_best({model.algo})"
     if s.policy == "threshold":
         return ThresholdPolicy(p["cpus_per_unit"], s.hpa_target, s.hpa_tolerance, s.hpa_window), ""
     if s.policy == "static":

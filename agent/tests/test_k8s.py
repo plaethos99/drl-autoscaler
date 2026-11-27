@@ -189,3 +189,11 @@ def test_app_url_for_the_load_generator(monkeypatch):
     assert app_url("http://172.31.4.183:8089") == "http://10.0.0.5:8080"
     assert Locust("http://x:8089/", "http://10.0.0.5:8080").target == "http://10.0.0.5:8080"
     assert Snapshot(3, 1).pending == 2 and Snapshot(1, 1).pending == 0
+
+
+def test_model_release_is_chosen_per_tier(monkeypatch):
+    from autoscaler.config import Settings
+    monkeypatch.delenv("MODEL_RELEASE", raising=False)
+    assert Settings(tier="vm").release == "model-v0.2" and Settings(tier="k8s").release == "model-v0.3"
+    monkeypatch.setenv("MODEL_RELEASE", "model-v9")
+    assert Settings(tier="k8s").release == "model-v9"

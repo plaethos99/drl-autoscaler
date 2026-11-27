@@ -53,7 +53,7 @@ from autoscaler.config import Settings
 from autoscaler.modelstore import fetch
 s = Settings()
 for name in ("metadata.json", "vm_best.zip"):
-    print("model file:", fetch(s.model_repo, s.model_release, name, s.model_dir))
+    print("model file:", fetch(s.model_repo, s.release, name, s.model_dir))
 EOF
 
 # Demo dashboard on :8501 (systemd service drl-dashboard; login in ~ubuntu/dashboard-login.txt).
